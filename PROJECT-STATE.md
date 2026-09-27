@@ -4,9 +4,9 @@
 
 ## Current phase
 
-**MVP architecture initialization**
+**MVP implementation — Gate 0**
 
-Repository exists; implementation has not started.
+Architecture baseline is accepted. Implementation has started with the first bounded Gate 0 task.
 
 ## Accepted baseline
 
@@ -23,12 +23,15 @@ Repository exists; implementation has not started.
 - Cloud download/share require product login
 - Cloud-download result must reach Panta through OpenList visibility + IndexCore scoped refresh, not a full scan
 - CodeArts CLI is the initial replaceable Agent Runtime
+- Initial backend implementation baseline: Go 1.27.1
+- MVP deployment shape: single-process modular monolith
+- Product DB: PostgreSQL, kept separate from IndexCore DB
 
 ## Active gate
 
 ### Gate 0 — Skeleton & contracts
 
-Status: **PLANNED**
+Status: **IN PROGRESS**
 
 Goal:
 Create the smallest compilable/runnable Panta skeleton with module boundaries and ports before implementing real 115 behavior.
@@ -53,7 +56,39 @@ Acceptance:
 - no code writes to IndexCore DB;
 - architecture docs match actual package dependencies.
 
-## Planned sequence
+### Current bounded task
+
+**Gate 0.1 — Bootstrap Go skeleton and freeze core ports**
+
+Tracking: GitHub Issue #1
+
+Scope:
+- Go module and runnable binary;
+- initial module/package boundaries;
+- provider-neutral provider ports;
+- IndexCore/OpenList ports;
+- in-memory test doubles and build/test harness.
+
+Explicitly deferred from Gate 0.1:
+- PostgreSQL migrations/schema;
+- real 115 adapter;
+- real IndexCore/OpenList network calls;
+- complex Job Engine implementation;
+- auth/share/usage;
+- search;
+- agent integration;
+- UI.
+
+## Planned Gate 0 task sequence
+
+- Gate 0.1 — Skeleton + first ports
+- Gate 0.2 — Product DB migrations + Asset/Release/Variant/Copy minimum persistence
+- Gate 0.3 — Job Engine minimum durable state model
+- Gate 0.4 — Mock provider + contract test completion + Gate 0 integration acceptance
+
+The sequence may be refined by an architect decision, but later tasks must not be pulled into an earlier PR without updating project state.
+
+## Planned project sequence
 
 - Gate 0 — Skeleton & contracts
 - Gate 1 — Observation plane: OpenList → IndexCore → Catalog
@@ -79,4 +114,6 @@ Until the relevant gate is accepted, do not implement:
 
 ## Next architect action
 
-Freeze Gate 0 contracts and issue the first bounded developer task.
+Review the developer PR for Issue #1 against its exact scope, dependency direction, tests and evidence.
+
+Do not authorize Gate 0.2 until Gate 0.1 is accepted (or an explicit architect exception is recorded).
