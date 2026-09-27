@@ -82,3 +82,18 @@ CodeArts CLI + GLM-5.2 is the initial Agent Runtime. Deterministic product flows
 **Status:** Accepted
 
 Project context, current state, accepted decisions, contracts, implementation and acceptance evidence must be committed to this repository.
+
+## D-011 — Go is the initial Panta backend implementation baseline
+
+**Status:** Accepted
+
+Panta MVP backend implementation starts with **Go 1.27.1**, aligned with the current IndexCore toolchain to reduce build/runtime/tooling divergence during integration.
+
+This is an implementation/toolchain choice, not a domain coupling decision:
+
+- Panta does not import IndexCore internal packages;
+- Panta communicates with IndexCore only through Panta-owned ports and supported external integration contracts;
+- provider adapters remain replaceable behind Panta provider contracts;
+- the MVP remains a single-process modular monolith until real scaling evidence justifies a split.
+
+The Panta product database remains PostgreSQL as established by the MVP blueprint. Database schema and migrations are handled in a later bounded Gate 0 task, not in Gate 0.1.
