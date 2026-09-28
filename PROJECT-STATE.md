@@ -4,9 +4,9 @@
 
 ## Current phase
 
-**MVP implementation — Gate 0**
+**MVP implementation — Gate 1**
 
-Gate 0.1, Gate 0.2, and Gate 0.3 are accepted and merged. Gate 0.4 is authorized and in progress.
+Gate 0 is formally accepted and closed. Gate 1.1 is authorized and in progress.
 
 ## Accepted baseline
 
@@ -35,7 +35,7 @@ Gate 0.1, Gate 0.2, and Gate 0.3 are accepted and merged. Gate 0.4 is authorized
 
 ### Gate 0 — Skeleton & contracts
 
-Status: **IN PROGRESS**
+Status: **ACCEPTED / CLOSED**
 
 Goal:
 Create the smallest compilable/runnable Panta skeleton with module boundaries and ports before implementing real 115 behavior.
@@ -132,15 +132,16 @@ Explicitly deferred:
 - auth/usage/search/agent/UI;
 - job DAG/event/audit system.
 
-## Current bounded task
-
 ### Gate 0.4 — Mock provider conformance, CI, and Gate 0 closeout
 
-Status: **AUTHORIZED / IN PROGRESS**
+Status: **ACCEPTED**
 
-Tracking: GitHub Issue #7
+Tracking: GitHub Issue #7 / PR #8
 
-Scope:
+Merged:
+- squash commit `e8a9af1b2344a68450de995886e1ebc55347e87c`
+
+Accepted scope:
 - reusable provider-neutral mock provider;
 - reusable provider contract/conformance suite;
 - bounded Gate 0 integration acceptance;
@@ -148,28 +149,58 @@ Scope:
 - GitHub CI with PostgreSQL 16;
 - Gate 0 closeout evidence and documentation.
 
+Gate 0 closeout evidence:
+- GitHub Actions run `36427876203` succeeded;
+- unit/contract/race/vet/build checks succeeded;
+- PostgreSQL 16 integration/migration checks succeeded;
+- no concrete 115 implementation is required by the core runtime/tests.
+
+## Current bounded task
+
+### Gate 1.1 — Storage connection/binding persistence and root mapping
+
+Status: **AUTHORIZED / IN PROGRESS**
+
+Tracking: GitHub Issue #9
+
+Scope:
+- append-only StorageConnection / StorageBinding migration;
+- provider-neutral storage mapping domain;
+- PostgreSQL persistence;
+- OpenList mount-path normalization;
+- unique canonical IndexCore-root mapping;
+- real PostgreSQL constraint/round-trip tests.
+
 Explicitly deferred:
-- StorageConnection / StorageBinding persistence;
-- real IndexCore/OpenList adapters;
-- Journal consumer / Catalog Projector;
+- real IndexCore HTTP client;
+- Q4/Q5/Q8/Q9 calls;
+- Journal cursor/projector;
+- Copy projection;
+- real OpenList client;
+- Mutation Hint/scoped refresh;
 - 115/MCP;
-- real worker scheduler/provider execution;
-- Acquisition Manifest;
-- auth/usage/search/agent/UI.
+- auth/search/agent/UI.
 
 ## Planned Gate 0 task sequence
 
 - Gate 0.1 — Skeleton + first ports — **ACCEPTED**
 - Gate 0.2 — Product DB migrations + Asset/Release/Variant/Copy minimum persistence — **ACCEPTED**
 - Gate 0.3 — Job Engine minimum durable state model — **ACCEPTED**
-- Gate 0.4 — Mock provider + contract test completion + Gate 0 integration acceptance — **IN PROGRESS**
+- Gate 0.4 — Mock provider + contract test completion + Gate 0 integration acceptance — **ACCEPTED**
 
 The sequence may be refined by an architect decision, but later tasks must not be pulled into an earlier PR without updating project state.
 
+## Gate 1 bounded task sequence
+
+- Gate 1.1 — StorageConnection / StorageBinding persistence — **IN PROGRESS**
+- Gate 1.2 — Typed IndexCore HTTP read client (Q4/Q5/Q8/Q9)
+- Gate 1.3 — Journal cursor persistence + idempotent unresolved Copy projector
+- Gate 1.4 — Controlled OpenList → IndexCore → Panta observation integration + Gate 1 closeout
+
 ## Planned project sequence
 
-- Gate 0 — Skeleton & contracts
-- Gate 1 — Observation plane: OpenList → IndexCore → Catalog
+- Gate 0 — Skeleton & contracts — **ACCEPTED**
+- Gate 1 — Observation plane: OpenList → IndexCore → Catalog — **IN PROGRESS**
 - Gate 2 — Resource semantics & direct-path/catalog read flows
 - Gate 3 — 115 acquisition + fast IndexCore synchronization
 - Gate 4 — Login + share/access + usage accounting
@@ -192,6 +223,6 @@ Until the relevant gate is accepted, do not implement:
 
 ## Next architect action
 
-Review the Gate 0.4 PR for Issue #7 against provider conformance, Gate 0 acceptance evidence, architecture guards, PostgreSQL integration coverage and green GitHub CI.
+Review the Gate 1.1 PR for Issue #9 against StorageConnection/StorageBinding schema, mapping uniqueness, mount-path normalization, persistence boundaries, PostgreSQL evidence and scope control.
 
-Do not authorize Gate 1 until Gate 0.4 is accepted and Gate 0 is formally closed.
+Do not authorize Gate 1.2 until Gate 1.1 is accepted.
