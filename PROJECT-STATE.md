@@ -6,7 +6,7 @@
 
 **MVP implementation — Gate 0**
 
-Gate 0.1 is accepted and merged. Gate 0.2 is authorized and in progress.
+Gate 0.1 and Gate 0.2 are accepted and merged. Gate 0.3 is authorized and in progress.
 
 ## Accepted baseline
 
@@ -27,6 +27,9 @@ Gate 0.1 is accepted and merged. Gate 0.2 is authorized and in progress.
 - MVP deployment shape: single-process modular monolith
 - Product DB: PostgreSQL, kept separate from IndexCore DB
 - Product schema uses append-only SQL migrations and fail-closed schema compatibility
+- Applied migration history must be an ordered prefix; history gaps/out-of-order states fail closed
+- Provider-changing side effects must be represented by a durable Job before execution
+- Expired RUNNING job leases become RECOVERY_REQUIRED, never blind automatic retry
 
 ## Active gate
 
@@ -76,38 +79,61 @@ Accepted scope:
 - in-memory test doubles and build/test harness;
 - provider registry identity/capability validation.
 
+### Gate 0.2 — PostgreSQL migrations and minimum Catalog persistence
+
+Status: **ACCEPTED**
+
+Tracking: GitHub Issue #3 / PR #4
+
+Merged:
+- squash commit `8d16b9a3692f1f2fb3cab48be6ccbcbacce0646c`
+
+Accepted scope:
+- independent Panta PostgreSQL configuration/connection boundary;
+- pgx/v5 persistence adapter boundary;
+- ordered embedded append-only SQL migrations;
+- schema migration checksum/history compatibility;
+- fail-closed future/modified/gapped/out-of-order migration detection;
+- minimum Asset / Release / Variant / Copy persistence;
+- nullable unresolved Copy;
+- real PostgreSQL round-trip and constraint tests.
+
 Known follow-up:
 - repository CI is not yet present; add before Gate 0 closeout.
 
 ## Current bounded task
 
-### Gate 0.2 — PostgreSQL migrations and minimum Catalog persistence
+### Gate 0.3 — Durable Job Engine minimum state and recovery semantics
 
 Status: **AUTHORIZED / IN PROGRESS**
 
-Tracking: GitHub Issue #3
+Tracking: GitHub Issue #5
 
 Scope:
-- independent Panta PostgreSQL configuration/connection boundary;
-- ordered append-only migration mechanism;
-- schema compatibility/status;
-- minimum Asset / Release / Variant / Copy schema;
-- persistence ports/adapters and PostgreSQL round-trip tests;
-- unresolved Copy support with nullable `variant_id`.
+- append-only jobs migration;
+- provider-neutral jobs domain;
+- durable PostgreSQL job repository/state transitions;
+- atomic claim and lease ownership;
+- explicit RETRY_WAIT;
+- RECOVERY_REQUIRED for expired running leases;
+- optional product-level idempotency key;
+- crash/restart persistence evidence.
 
 Explicitly deferred:
-- StorageConnection / StorageBinding tables;
-- Job Engine durability;
-- real IndexCore/OpenList clients;
-- IndexCore Journal projector;
-- 115 provider;
-- auth/usage/search/agent/UI.
+- real worker loop/scheduler;
+- provider execution;
+- 115/MCP;
+- Acquisition Manifest;
+- provider-specific retry/backoff/recovery;
+- real IndexCore/OpenList integrations;
+- auth/usage/search/agent/UI;
+- job DAG/event/audit system.
 
 ## Planned Gate 0 task sequence
 
 - Gate 0.1 — Skeleton + first ports — **ACCEPTED**
-- Gate 0.2 — Product DB migrations + Asset/Release/Variant/Copy minimum persistence — **IN PROGRESS**
-- Gate 0.3 — Job Engine minimum durable state model
+- Gate 0.2 — Product DB migrations + Asset/Release/Variant/Copy minimum persistence — **ACCEPTED**
+- Gate 0.3 — Job Engine minimum durable state model — **IN PROGRESS**
 - Gate 0.4 — Mock provider + contract test completion + Gate 0 integration acceptance
 
 The sequence may be refined by an architect decision, but later tasks must not be pulled into an earlier PR without updating project state.
@@ -138,6 +164,6 @@ Until the relevant gate is accepted, do not implement:
 
 ## Next architect action
 
-Review the Gate 0.2 PR for Issue #3 against migration reproducibility, schema boundaries, persistence dependency direction, PostgreSQL integration evidence and scope control.
+Review the Gate 0.3 PR for Issue #5 against job-state transition safety, atomic claim/lease semantics, restart durability, retry/recovery behavior, PostgreSQL integration evidence and scope control.
 
-Do not authorize Gate 0.3 until Gate 0.2 is accepted (or an explicit architect exception is recorded).
+Do not authorize Gate 0.4 until Gate 0.3 is accepted (or an explicit architect exception is recorded).
