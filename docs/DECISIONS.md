@@ -226,3 +226,30 @@ Journal payload is not authoritative for physical or logical identity. The proje
 The projector never creates Asset/Release/Variant identity. Newly observed physical resources remain unresolved Copies with variant_id NULL.
 
 Continuous polling/scheduling is not part of this decision or Gate 1.3.
+
+
+## D-018 — IndexCore owns OpenList collection in the observation plane
+
+**Status:** Accepted
+
+Panta does not add a second production OpenList tree-walking client for Gate 1.
+
+The observation boundary is:
+
+```text
+OpenList-compatible storage view
+        ↓
+IndexCore OpenList Collector
+        ↓
+Canonical Inventory + Journal
+        ↓
+Panta IndexCore Query client + Catalog Projector
+```
+
+IndexCore owns collection, normalization, canonical identity, completeness safety, and Journal production. Panta consumes canonical physical truth through IndexCore and projects product-owned Copy state.
+
+Panta's existing OpenList VisibilityPort / AccessPort remains a later control/acquisition-side contract. It may be implemented when Gate 3/4 needs post-download visibility verification or access resolution, but it must not become a second canonical observation scanner.
+
+Gate 1 closeout uses a controlled OpenList-compatible fixture and a real, externally executed IndexCore binary pinned to an accepted version. Panta never imports IndexCore internals to obtain this evidence.
+
+OpenList absence is not physical deletion. The accepted IndexCore OpenList collector is additive-safe unless stronger completeness evidence exists.
