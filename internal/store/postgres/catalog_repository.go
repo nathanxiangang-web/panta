@@ -1,0 +1,176 @@
+package postgres
+
+import (
+	"context"
+	"database/sql"
+	"errors"
+	"fmt"
+
+	"github.com/jackc/pgx/v5"
+	"github.com/jackc/pgx/v5/pgconn"
+
+	"github.com/nathanxiangang-web/panta/internal/catalog"
+)
+
+type catalogDB interface {
+	Exec(context.Context, string, ...any) (pgconn.CommandTag, error)
+	QueryRow(context.Context, string, ...any) pgx.Row
+}
+
+type CatalogRepository struct {
+	db catalogDB
+}
+
+var _ catalog.Repository = (*CatalogRepository)(nil)
+
+func NewCatalogRepository(db catalogDB) (*CatalogRepository, error) {
+	if db == nil {
+		return nil, errors.New("catalog database is required")
+	}
+	return &CatalogRepository{db: db}, nil
+}
+
+func (repository *CatalogRepository) CreateAsset(ctx context.Context, asset catalog.Asset) error {
+	_, err := repository.db.Exec(ctx, `
+INSERT INTO assets (asset_id, canonical_name, category, status, created_at, updated_at)
+VALUES ($1, $2, $3, $4, $5, $6)`,
+		string(asset.ID), asset.CanonicalName, asset.Category, asset.Status, asset.CreatedAt, asset.UpdatedAt,
+	)
+	return wrapWriteError("create asset", err)
+}
+
+func (repository *CatalogRepository) GetAsset(ctx context.Context, id catalog.AssetID) (catalog.Asset, error) {
+	var asset catalog.Asset
+	var assetID string
+	err := repository.db.QueryRow(ctx, `
+SELECT asset_id::text, canonical_name, category, status, created_at, updated_at
+FROM assets WHERE asset_id = $1`, string(id)).Scan(
+		&assetID, &asset.CanonicalName, &asset.Category, &asset.Status, &asset.CreatedAt, &asset.UpdatedAt,
+	)
+	if err != nil {
+		return catalog.Asset{}, wrapReadError("asset", string(id), err)
+	}
+	asset.ID = catalog.AssetID(assetID)
+	return asset, nil
+}
+
+func (repository *CatalogRepository) CreateRelease(ctx context.Context, release catalog.Release) error {
+	_, err := repository.db.Exec(ctx, `
+INSERT INTO releases (
+    release_id, asset_id, version_raw, version_normalized, version_scheme,
+    channel, release_date, source_ref, status, created_at, updated_at
+) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)`,
+		string(release.ID), string(release.AssetID), release.VersionRaw, release.VersionNormalized,
+		string(release.VersionScheme), release.Channel, release.ReleaseDate, release.SourceRef,
+		release.Status, release.CreatedAt, release.UpdatedAt,
+	)
+	return wrapWriteError("create release", err)
+}
+
+func (repository *CatalogRepository) GetRelease(ctx context.Context, id catalog.ReleaseID) (catalog.Release, error) {
+	var release catalog.Release
+	var releaseID, assetID string
+	var releaseDate sql.NullTime
+	err := repository.db.QueryRow(ctx, `
+SELECT release_id::text, asset_id::text, version_raw, version_normalized,
+       version_scheme, channel, release_date, source_ref, status, created_at, updated_at
+FROM releases WHERE release_id = $1`, string(id)).Scan(
+		&releaseID, &assetID, &release.VersionRaw, &release.VersionNormalized,
+		&release.VersionScheme, &release.Channel, &releaseDate, &release.SourceRef,
+		&release.Status, &release.CreatedAt, &release.UpdatedAt,
+	)
+	if err != nil {
+		return catalog.Release{}, wrapReadError("release", string(id), err)
+	}
+	release.ID = catalog.ReleaseID(releaseID)
+	release.AssetID = catalog.AssetID(assetID)
+	if releaseDate.Valid {
+		value := releaseDate.Time
+		release.ReleaseDate = &value
+	}
+	return release, nil
+}
+
+func (repository *CatalogRepository) CreateVariant(ctx context.Context, variant catalog.Variant) error {
+	_, err := repository.db.Exec(ctx, `
+INSERT INTO variants (variant_id, release_id, variant_key, attributes, status, created_at, updated_at)
+VALUES ($1, $2, $3, $4, $5, $6, $7)`,
+		string(variant.ID), string(variant.ReleaseID), variant.VariantKey, string(variant.Attributes),
+		variant.Status, variant.CreatedAt, variant.UpdatedAt,
+	)
+	return wrapWriteError("create variant", err)
+}
+
+func (repository *CatalogRepository) GetVariant(ctx context.Context, id catalog.VariantID) (catalog.Variant, error) {
+	var variant catalog.Variant
+	var variantID, releaseID string
+	var attributes []byte
+	err := repository.db.QueryRow(ctx, `
+SELECT variant_id::text, release_id::text, variant_key, attributes, status, created_at, updated_at
+FROM variants WHERE variant_id = $1`, string(id)).Scan(
+		&variantID, &releaseID, &variant.VariantKey, &attributes,
+		&variant.Status, &variant.CreatedAt, &variant.UpdatedAt,
+	)
+	if err != nil {
+		return catalog.Variant{}, wrapReadError("variant", string(id), err)
+	}
+	variant.ID = catalog.VariantID(variantID)
+	variant.ReleaseID = catalog.ReleaseID(releaseID)
+	variant.Attributes = attributes
+	return variant, nil
+}
+
+func (repository *CatalogRepository) CreateCopy(ctx context.Context, resourceCopy catalog.Copy) error {
+	var variantID *string
+	if resourceCopy.VariantID != nil {
+		value := string(*resourceCopy.VariantID)
+		variantID = &value
+	}
+	_, err := repository.db.Exec(ctx, `
+INSERT INTO copies (
+    copy_id, variant_id, indexcore_root_id, indexcore_resource_id,
+    storage_binding_id, availability, created_at, updated_at
+) VALUES ($1, $2, $3, $4, $5, $6, $7, $8)`,
+		string(resourceCopy.ID), variantID, resourceCopy.IndexCoreRootID, resourceCopy.IndexCoreResourceID,
+		string(resourceCopy.StorageBindingID), resourceCopy.Availability,
+		resourceCopy.CreatedAt, resourceCopy.UpdatedAt,
+	)
+	return wrapWriteError("create copy", err)
+}
+
+func (repository *CatalogRepository) GetCopy(ctx context.Context, id catalog.CopyID) (catalog.Copy, error) {
+	var resourceCopy catalog.Copy
+	var copyID, storageBindingID string
+	var variantID sql.NullString
+	err := repository.db.QueryRow(ctx, `
+SELECT copy_id::text, variant_id::text, indexcore_root_id, indexcore_resource_id,
+       storage_binding_id::text, availability, created_at, updated_at
+FROM copies WHERE copy_id = $1`, string(id)).Scan(
+		&copyID, &variantID, &resourceCopy.IndexCoreRootID, &resourceCopy.IndexCoreResourceID,
+		&storageBindingID, &resourceCopy.Availability, &resourceCopy.CreatedAt, &resourceCopy.UpdatedAt,
+	)
+	if err != nil {
+		return catalog.Copy{}, wrapReadError("copy", string(id), err)
+	}
+	resourceCopy.ID = catalog.CopyID(copyID)
+	resourceCopy.StorageBindingID = catalog.StorageBindingID(storageBindingID)
+	if variantID.Valid {
+		value := catalog.VariantID(variantID.String)
+		resourceCopy.VariantID = &value
+	}
+	return resourceCopy, nil
+}
+
+func wrapReadError(entity, id string, err error) error {
+	if errors.Is(err, pgx.ErrNoRows) {
+		return fmt.Errorf("%w: %s %s", catalog.ErrNotFound, entity, id)
+	}
+	return fmt.Errorf("get %s %s: %w", entity, id, err)
+}
+
+func wrapWriteError(operation string, err error) error {
+	if err == nil {
+		return nil
+	}
+	return fmt.Errorf("%s: %w", operation, err)
+}
