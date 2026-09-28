@@ -100,8 +100,9 @@ make db-status
 
 `internal/catalog` owns the Asset → Release → Variant → Copy types and the
 persistence port. The pgx/v5 implementation is isolated in
-`internal/store/postgres`. `storage_binding_id` is opaque at this gate, and a
-Copy may have a null `variant_id` while awaiting logical classification.
+`internal/store/postgres`. A Copy may have a null `variant_id` while awaiting
+logical classification. Gate 1.3 later hardens `storage_binding_id` with its
+now-valid foreign key to `storage_bindings`.
 
 PostgreSQL integration tests require a dedicated disposable database named
 `panta_test` or ending in `_test`; the tests recreate its `public` schema:
@@ -211,3 +212,31 @@ The adapter uses only the standard HTTP client with a bounded timeout. Contract
 tests run against `httptest.Server`; no IndexCore process or database is needed.
 Journal cursor persistence, Catalog projection, OpenList integration, retries,
 Mutation Hints, scoped refresh, and root mutations remain outside Gate 1.2.
+
+## Gate 1.3 one-shot Journal projection
+
+`internal/projector` owns one bounded `ProjectOnce` application operation. It
+loads an ACTIVE StorageBinding, reads that binding's durable cursor, calls Q8
+with the exact cursor, validates the ordered page, and maps resource events to
+unresolved Copy availability. Root lifecycle events advance only the cursor;
+Journal payload remains opaque and does not drive identity or state.
+
+`internal/store/postgres` owns the atomic persistence boundary:
+
+```text
+lock and compare expected cursor
+  -> upsert ordered Copy mutations without changing CopyID/VariantID/binding
+  -> advance cursor to the last event_seq actually seen
+  -> commit one PostgreSQL transaction
+```
+
+Migration `0004_indexcore_projection.sql` adds the per-binding cursor and the
+`copies.storage_binding_id` foreign key. Missing cursor state reads as zero.
+Concurrent stale cursors and attempted binding rebinding fail closed. The Q8
+network call happens before the transaction begins. Candidate Copy UUIDs are
+created by the application-side projector and supplied to persistence; an
+upsert uses a candidate only for a genuine insert and preserves the existing
+CopyID on conflict.
+
+Gate 1.3 deliberately adds no polling loop, scheduler, OpenList client,
+Mutation Hint, classification, provider execution, API, or UI.

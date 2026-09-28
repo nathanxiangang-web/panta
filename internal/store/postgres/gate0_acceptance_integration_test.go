@@ -11,6 +11,7 @@ import (
 	"github.com/nathanxiangang-web/panta/internal/jobs"
 	"github.com/nathanxiangang-web/panta/internal/providers/registry"
 	"github.com/nathanxiangang-web/panta/internal/providers/testprovider"
+	"github.com/nathanxiangang-web/panta/internal/storage"
 )
 
 type knownPathIndexCore struct {
@@ -46,9 +47,10 @@ func TestGateZeroAcceptance(t *testing.T) {
 		t.Fatalf("Apply() error = %v", err)
 	}
 	assertCurrentSchema(t, status)
-	if len(status.Applied) != 3 || status.Applied[0].Version != 1 || status.Applied[1].Version != 2 || status.Applied[2].Version != 3 {
-		t.Fatalf("applied migrations = %#v, want ordered 0001 + 0002 + 0003", status.Applied)
+	if len(status.Applied) != 4 || status.Applied[0].Version != 1 || status.Applied[1].Version != 2 || status.Applied[2].Version != 3 || status.Applied[3].Version != 4 {
+		t.Fatalf("applied migrations = %#v, want ordered 0001 through 0004", status.Applied)
 	}
+	seedStorageBinding(t, ctx, pool, storage.BindingID("a0000000-0000-4000-8000-000000000005"), "root-gate0")
 
 	mock := testprovider.New()
 	providers := registry.New()
