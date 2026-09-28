@@ -202,3 +202,27 @@ In particular:
 - Stable remote error categories remain typed and distinguishable from transport and malformed-response failures.
 
 Gate 0 placeholder contracts may be refined when real external semantics prove them insufficient. Preserving an obsolete simplified contract is not considered backward compatibility when it would hide correctness-critical behavior.
+
+
+## D-017 — Journal projection commits Copy state and cursor atomically
+
+**Status:** Accepted
+
+Panta's Catalog projection is derived from IndexCore canonical Journal and must be replay-safe.
+
+For each StorageBinding:
+- the durable projection cursor is the last Journal event_seq whose Copy mutations are committed;
+- IndexCore Q8 is called outside any Panta database transaction using exactly that cursor as after_seq;
+- the fetched batch is validated before mutation;
+- Copy mutations and cursor advancement commit in one PostgreSQL transaction;
+- the transaction compares/locks the expected cursor so concurrent projectors cannot overwrite newer progress.
+
+A crash or failure must leave both Copy projection and cursor at the previous committed state.
+
+Resource-added, resource-updated, resource-renamed, and resource-moved project physical Copy availability as PRESENT. Resource-removed projects REMOVED. Root lifecycle events advance the cursor but do not bulk-change child Copy availability.
+
+Journal payload is not authoritative for physical or logical identity. The projector uses StorageBinding root mapping, event type, and canonical resource_id only.
+
+The projector never creates Asset/Release/Variant identity. Newly observed physical resources remain unresolved Copies with variant_id NULL.
+
+Continuous polling/scheduling is not part of this decision or Gate 1.3.
