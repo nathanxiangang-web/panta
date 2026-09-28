@@ -88,13 +88,13 @@ FOR UPDATE`, string(batch.StorageBindingID)).Scan(&current); err != nil {
 INSERT INTO copies (
     copy_id, variant_id, indexcore_root_id, indexcore_resource_id,
     storage_binding_id, availability, created_at, updated_at
-) VALUES (gen_random_uuid(), NULL, $1, $2, $3, $4, clock_timestamp(), clock_timestamp())
+) VALUES ($1, NULL, $2, $3, $4, $5, clock_timestamp(), clock_timestamp())
 ON CONFLICT (indexcore_root_id, indexcore_resource_id) DO UPDATE
 SET availability = EXCLUDED.availability,
     updated_at = EXCLUDED.updated_at
 WHERE copies.storage_binding_id = EXCLUDED.storage_binding_id
 RETURNING copy_id::text`,
-			mutation.IndexCoreRootID, mutation.IndexCoreResourceID,
+			string(mutation.CopyID), mutation.IndexCoreRootID, mutation.IndexCoreResourceID,
 			string(mutation.StorageBindingID), string(mutation.Availability),
 		).Scan(&copyID)
 		if errors.Is(err, pgx.ErrNoRows) {
@@ -128,7 +128,7 @@ func validateProjectionBatch(batch projector.Batch) error {
 		return projector.ErrInvalidArgument
 	}
 	for _, mutation := range batch.Mutations {
-		if mutation.StorageBindingID != batch.StorageBindingID || strings.TrimSpace(mutation.IndexCoreRootID) == "" ||
+		if mutation.CopyID == "" || mutation.StorageBindingID != batch.StorageBindingID || strings.TrimSpace(mutation.IndexCoreRootID) == "" ||
 			strings.TrimSpace(mutation.IndexCoreResourceID) == "" ||
 			(mutation.Availability != projector.AvailabilityPresent && mutation.Availability != projector.AvailabilityRemoved) {
 			return projector.ErrInvalidArgument

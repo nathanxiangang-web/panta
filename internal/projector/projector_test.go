@@ -4,8 +4,10 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"testing"
 
+	"github.com/nathanxiangang-web/panta/internal/catalog"
 	"github.com/nathanxiangang-web/panta/internal/integrations/indexcore"
 	"github.com/nathanxiangang-web/panta/internal/projector"
 	"github.com/nathanxiangang-web/panta/internal/storage"
@@ -113,6 +115,10 @@ func TestProjectOnceMapsResourceEventsInOrderAndIgnoresPayload(t *testing.T) {
 			mutation.IndexCoreResourceID != resourceID || mutation.StorageBindingID != "binding-1" {
 			t.Fatalf("mutation[%d] = %#v", i, mutation)
 		}
+		wantCopyID := catalog.CopyID(fmt.Sprintf("00000000-0000-4000-8000-%012d", i+1))
+		if mutation.CopyID != wantCopyID {
+			t.Fatalf("mutation[%d].CopyID = %q, want %q", i, mutation.CopyID, wantCopyID)
+		}
 	}
 }
 
@@ -163,7 +169,13 @@ func activeBinding() storage.Binding {
 
 func newService(t *testing.T, binding storage.Binding, journal *journalReader, store *projectionStore) *projector.Service {
 	t.Helper()
-	service, err := projector.NewService(bindingReader{binding: binding}, journal, store)
+	sequence := 0
+	service, err := projector.NewService(bindingReader{binding: binding}, journal, store,
+		projector.WithCopyIDFactory(func() (catalog.CopyID, error) {
+			sequence++
+			return catalog.CopyID(fmt.Sprintf("00000000-0000-4000-8000-%012d", sequence)), nil
+		}),
+	)
 	if err != nil {
 		t.Fatalf("NewService() error = %v", err)
 	}

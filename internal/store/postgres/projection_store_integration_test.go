@@ -11,12 +11,13 @@ import (
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
 
+	"github.com/nathanxiangang-web/panta/internal/catalog"
 	"github.com/nathanxiangang-web/panta/internal/integrations/indexcore"
 	"github.com/nathanxiangang-web/panta/internal/projector"
 	"github.com/nathanxiangang-web/panta/internal/storage"
 )
 
-func TestPostgresProjectionStoreAtomicIdempotentAndRestartSafe(t *testing.T) {
+func TestPostgresProjectionStoreAtomicIdempotentConcurrentAndRestartSafe(t *testing.T) {
 	ctx := context.Background()
 	pool := integrationPool(t, ctx)
 	resetTestSchema(t, ctx, pool)
@@ -34,8 +35,10 @@ func TestPostgresProjectionStoreAtomicIdempotentAndRestartSafe(t *testing.T) {
 
 	bindingOne := storage.BindingID("91000000-0000-4000-8000-000000000001")
 	bindingTwo := storage.BindingID("91000000-0000-4000-8000-000000000002")
+	bindingThree := storage.BindingID("91000000-0000-4000-8000-000000000003")
 	seedStorageBinding(t, ctx, pool, bindingOne, "root-1")
 	seedStorageBinding(t, ctx, pool, bindingTwo, "root-2")
+	seedStorageBinding(t, ctx, pool, bindingThree, "root-3")
 	assertCopyBindingForeignKey(t, ctx, pool)
 
 	store, err := NewProjectionStore(pool)
@@ -47,6 +50,7 @@ func TestPostgresProjectionStoreAtomicIdempotentAndRestartSafe(t *testing.T) {
 	}
 
 	resourceMutation := projector.Mutation{
+		CopyID:          "93000000-0000-4000-8000-000000000002",
 		IndexCoreRootID: "root-1", IndexCoreResourceID: "resource-1",
 		StorageBindingID: bindingOne, Availability: projector.AvailabilityPresent,
 	}
@@ -58,7 +62,9 @@ func TestPostgresProjectionStoreAtomicIdempotentAndRestartSafe(t *testing.T) {
 	journal := &projectionJournal{events: []indexcore.JournalEvent{{
 		EventSeq: 1, EventType: indexcore.EventResourceAdded, ResourceID: &resourceID,
 	}}}
-	service, err := projector.NewService(bindingRepository, journal, store)
+	candidateCopyID := catalog.CopyID("93000000-0000-4000-8000-000000000001")
+	service, err := projector.NewService(bindingRepository, journal, store,
+		projector.WithCopyIDFactory(func() (catalog.CopyID, error) { return candidateCopyID, nil }))
 	if err != nil {
 		t.Fatalf("NewService() error = %v", err)
 	}
@@ -69,7 +75,7 @@ func TestPostgresProjectionStoreAtomicIdempotentAndRestartSafe(t *testing.T) {
 		t.Fatalf("ProjectOnce Journal calls = %#v", journal.calls)
 	}
 	first := readProjectedCopy(t, ctx, pool, "root-1", "resource-1")
-	if first.variantID != nil || first.availability != "PRESENT" || first.bindingID != string(bindingOne) {
+	if first.copyID != string(candidateCopyID) || first.variantID != nil || first.availability != "PRESENT" || first.bindingID != string(bindingOne) {
 		t.Fatalf("first projected Copy = %#v", first)
 	}
 
@@ -116,8 +122,8 @@ func TestPostgresProjectionStoreAtomicIdempotentAndRestartSafe(t *testing.T) {
 	rollbackBatch := projector.Batch{
 		StorageBindingID: bindingTwo, ExpectedCursor: 0, LastEventSeq: 2,
 		Mutations: []projector.Mutation{
-			{IndexCoreRootID: "root-2", IndexCoreResourceID: "must-roll-back", StorageBindingID: bindingTwo, Availability: projector.AvailabilityPresent},
-			{IndexCoreRootID: "root-1", IndexCoreResourceID: "resource-1", StorageBindingID: bindingTwo, Availability: projector.AvailabilityRemoved},
+			{CopyID: "93000000-0000-4000-8000-000000000003", IndexCoreRootID: "root-2", IndexCoreResourceID: "must-roll-back", StorageBindingID: bindingTwo, Availability: projector.AvailabilityPresent},
+			{CopyID: "93000000-0000-4000-8000-000000000004", IndexCoreRootID: "root-1", IndexCoreResourceID: "resource-1", StorageBindingID: bindingTwo, Availability: projector.AvailabilityRemoved},
 		},
 	}
 	if err := store.ApplyBatch(ctx, rollbackBatch); !errors.Is(err, projector.ErrBindingConflict) {
@@ -138,6 +144,76 @@ func TestPostgresProjectionStoreAtomicIdempotentAndRestartSafe(t *testing.T) {
 	}
 	if cursor, err := store.Cursor(ctx, bindingOne); err != nil || cursor != 4 {
 		t.Fatalf("cursor after stale attempt = %d, %v", cursor, err)
+	}
+
+	concurrentBatches := []projector.Batch{
+		{
+			StorageBindingID: bindingThree, ExpectedCursor: 0, LastEventSeq: 10,
+			Mutations: []projector.Mutation{{
+				CopyID: "93000000-0000-4000-8000-000000000010", IndexCoreRootID: "root-3",
+				IndexCoreResourceID: "winner-a", StorageBindingID: bindingThree, Availability: projector.AvailabilityPresent,
+			}},
+		},
+		{
+			StorageBindingID: bindingThree, ExpectedCursor: 0, LastEventSeq: 20,
+			Mutations: []projector.Mutation{{
+				CopyID: "93000000-0000-4000-8000-000000000020", IndexCoreRootID: "root-3",
+				IndexCoreResourceID: "winner-b", StorageBindingID: bindingThree, Availability: projector.AvailabilityPresent,
+			}},
+		},
+	}
+	type concurrentResult struct {
+		batch projector.Batch
+		err   error
+	}
+	start := make(chan struct{})
+	results := make(chan concurrentResult, len(concurrentBatches))
+	for _, batch := range concurrentBatches {
+		batch := batch
+		go func() {
+			<-start
+			results <- concurrentResult{batch: batch, err: store.ApplyBatch(ctx, batch)}
+		}()
+	}
+	close(start)
+	var winningBatch *projector.Batch
+	conflicts := 0
+	for range concurrentBatches {
+		result := <-results
+		switch {
+		case result.err == nil:
+			if winningBatch != nil {
+				t.Fatal("both concurrent first projections committed")
+			}
+			batch := result.batch
+			winningBatch = &batch
+		case errors.Is(result.err, projector.ErrCursorConflict):
+			conflicts++
+		default:
+			t.Fatalf("concurrent ApplyBatch() error = %v", result.err)
+		}
+	}
+	if winningBatch == nil || conflicts != 1 {
+		t.Fatalf("concurrent result: winner=%#v conflicts=%d", winningBatch, conflicts)
+	}
+	if cursor, err := store.Cursor(ctx, bindingThree); err != nil || cursor != winningBatch.LastEventSeq {
+		t.Fatalf("concurrent cursor = %d, %v; winner=%#v", cursor, err, winningBatch)
+	}
+	var concurrentCount int
+	if err := pool.QueryRow(ctx, `SELECT count(*) FROM copies WHERE indexcore_root_id = 'root-3'`).Scan(&concurrentCount); err != nil || concurrentCount != 1 {
+		t.Fatalf("concurrent Copy count = %d, %v", concurrentCount, err)
+	}
+	winningCopy := readProjectedCopy(t, ctx, pool, "root-3", winningBatch.Mutations[0].IndexCoreResourceID)
+	if winningCopy.copyID != string(winningBatch.Mutations[0].CopyID) {
+		t.Fatalf("concurrent winning CopyID = %q, want %q", winningCopy.copyID, winningBatch.Mutations[0].CopyID)
+	}
+	loserResourceID := concurrentBatches[0].Mutations[0].IndexCoreResourceID
+	if loserResourceID == winningBatch.Mutations[0].IndexCoreResourceID {
+		loserResourceID = concurrentBatches[1].Mutations[0].IndexCoreResourceID
+	}
+	var loserCount int
+	if err := pool.QueryRow(ctx, `SELECT count(*) FROM copies WHERE indexcore_root_id = 'root-3' AND indexcore_resource_id = $1`, loserResourceID).Scan(&loserCount); err != nil || loserCount != 0 {
+		t.Fatalf("concurrent losing Copy count = %d, %v", loserCount, err)
 	}
 
 	reopenedPool, err := pgxpool.New(ctx, os.Getenv("PANTA_TEST_DATABASE_URL"))

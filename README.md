@@ -233,7 +233,10 @@ lock and compare expected cursor
 Migration `0004_indexcore_projection.sql` adds the per-binding cursor and the
 `copies.storage_binding_id` foreign key. Missing cursor state reads as zero.
 Concurrent stale cursors and attempted binding rebinding fail closed. The Q8
-network call happens before the transaction begins.
+network call happens before the transaction begins. Candidate Copy UUIDs are
+created by the application-side projector and supplied to persistence; an
+upsert uses a candidate only for a genuine insert and preserves the existing
+CopyID on conflict.
 
 Gate 1.3 deliberately adds no polling loop, scheduler, OpenList client,
 Mutation Hint, classification, provider execution, API, or UI.

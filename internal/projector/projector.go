@@ -4,20 +4,24 @@ package projector
 
 import (
 	"context"
+	"crypto/rand"
+	"encoding/hex"
 	"errors"
 	"fmt"
 	"strings"
 
+	"github.com/nathanxiangang-web/panta/internal/catalog"
 	"github.com/nathanxiangang-web/panta/internal/integrations/indexcore"
 	"github.com/nathanxiangang-web/panta/internal/storage"
 )
 
 var (
-	ErrInvalidArgument = errors.New("invalid projection argument")
-	ErrDisabledBinding = errors.New("storage binding is disabled")
-	ErrInvalidJournal  = errors.New("invalid IndexCore Journal page")
-	ErrCursorConflict  = errors.New("projection cursor conflict")
-	ErrBindingConflict = errors.New("physical resource belongs to another storage binding")
+	ErrInvalidArgument  = errors.New("invalid projection argument")
+	ErrDisabledBinding  = errors.New("storage binding is disabled")
+	ErrInvalidJournal   = errors.New("invalid IndexCore Journal page")
+	ErrCopyIDGeneration = errors.New("Copy ID generation failed")
+	ErrCursorConflict   = errors.New("projection cursor conflict")
+	ErrBindingConflict  = errors.New("physical resource belongs to another storage binding")
 )
 
 type Availability string
@@ -29,6 +33,7 @@ const (
 
 // Mutation is one ordered unresolved Copy projection operation.
 type Mutation struct {
+	CopyID              catalog.CopyID
 	IndexCoreRootID     string
 	IndexCoreResourceID string
 	StorageBindingID    storage.BindingID
@@ -59,13 +64,39 @@ type Service struct {
 	bindings BindingReader
 	journal  indexcore.JournalReadPort
 	store    ProjectionStore
+	copyIDs  CopyIDFactory
 }
 
-func NewService(bindings BindingReader, journal indexcore.JournalReadPort, store ProjectionStore) (*Service, error) {
+// CopyIDFactory creates Panta-owned candidate Copy identities before the
+// persistence adapter is called.
+type CopyIDFactory func() (catalog.CopyID, error)
+
+type Option func(*Service) error
+
+func WithCopyIDFactory(factory CopyIDFactory) Option {
+	return func(service *Service) error {
+		if factory == nil {
+			return ErrInvalidArgument
+		}
+		service.copyIDs = factory
+		return nil
+	}
+}
+
+func NewService(bindings BindingReader, journal indexcore.JournalReadPort, store ProjectionStore, options ...Option) (*Service, error) {
 	if bindings == nil || journal == nil || store == nil {
 		return nil, ErrInvalidArgument
 	}
-	return &Service{bindings: bindings, journal: journal, store: store}, nil
+	service := &Service{bindings: bindings, journal: journal, store: store, copyIDs: newCopyID}
+	for _, option := range options {
+		if option == nil {
+			continue
+		}
+		if err := option(service); err != nil {
+			return nil, err
+		}
+	}
+	return service, nil
 }
 
 type Result struct {
@@ -104,7 +135,7 @@ func (service *Service) ProjectOnce(ctx context.Context, bindingID storage.Bindi
 		return result, nil
 	}
 
-	batch, err := mapBatch(binding, cursor, events)
+	batch, err := service.mapBatch(binding, cursor, events)
 	if err != nil {
 		return Result{}, err
 	}
@@ -116,7 +147,7 @@ func (service *Service) ProjectOnce(ctx context.Context, bindingID storage.Bindi
 	return result, nil
 }
 
-func mapBatch(binding storage.Binding, cursor int64, events []indexcore.JournalEvent) (Batch, error) {
+func (service *Service) mapBatch(binding storage.Binding, cursor int64, events []indexcore.JournalEvent) (Batch, error) {
 	batch := Batch{StorageBindingID: binding.ID, ExpectedCursor: cursor, LastEventSeq: cursor}
 	previous := cursor
 	for position, event := range events {
@@ -136,12 +167,40 @@ func mapBatch(binding storage.Binding, cursor int64, events []indexcore.JournalE
 		if event.ResourceID == nil || strings.TrimSpace(*event.ResourceID) == "" {
 			return Batch{}, fmt.Errorf("%w: event %d requires resource_id", ErrInvalidJournal, position)
 		}
+		copyID, err := service.copyIDs()
+		if err != nil {
+			return Batch{}, fmt.Errorf("%w: %v", ErrCopyIDGeneration, err)
+		}
+		if copyID == "" {
+			return Batch{}, ErrCopyIDGeneration
+		}
 		batch.Mutations = append(batch.Mutations, Mutation{
+			CopyID:          copyID,
 			IndexCoreRootID: binding.IndexCoreRootID, IndexCoreResourceID: *event.ResourceID,
 			StorageBindingID: binding.ID, Availability: availability,
 		})
 	}
 	return batch, nil
+}
+
+func newCopyID() (catalog.CopyID, error) {
+	var value [16]byte
+	if _, err := rand.Read(value[:]); err != nil {
+		return "", fmt.Errorf("generate UUID entropy: %w", err)
+	}
+	value[6] = (value[6] & 0x0f) | 0x40
+	value[8] = (value[8] & 0x3f) | 0x80
+	encoded := make([]byte, 36)
+	hex.Encode(encoded[0:8], value[0:4])
+	encoded[8] = '-'
+	hex.Encode(encoded[9:13], value[4:6])
+	encoded[13] = '-'
+	hex.Encode(encoded[14:18], value[6:8])
+	encoded[18] = '-'
+	hex.Encode(encoded[19:23], value[8:10])
+	encoded[23] = '-'
+	hex.Encode(encoded[24:36], value[10:16])
+	return catalog.CopyID(encoded), nil
 }
 
 func eventAvailability(eventType indexcore.JournalEventType) (Availability, bool, bool) {
