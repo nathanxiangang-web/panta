@@ -147,7 +147,7 @@ func migratedStorageRepository(t *testing.T, ctx context.Context) *StorageReposi
 	if err != nil {
 		t.Fatalf("Apply() error = %v", err)
 	}
-	if !status.Compatible || status.CurrentVersion != 3 || status.LatestVersion != 3 || len(status.Applied) != 3 {
+	if !status.Compatible || status.CurrentVersion != 4 || status.LatestVersion != 4 || len(status.Applied) != 4 {
 		t.Fatalf("migration status = %#v", status)
 	}
 	repository, err := NewStorageRepository(pool)

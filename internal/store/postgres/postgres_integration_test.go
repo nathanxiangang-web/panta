@@ -79,6 +79,7 @@ func TestPostgresCatalogRoundTripAndConstraints(t *testing.T) {
 	if _, err := migrator.Apply(ctx); err != nil {
 		t.Fatalf("Apply() error = %v", err)
 	}
+	seedStorageBinding(t, ctx, pool, "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa", "root-a")
 	repository, err := NewCatalogRepository(pool)
 	if err != nil {
 		t.Fatalf("NewCatalogRepository() error = %v", err)
