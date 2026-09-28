@@ -191,3 +191,23 @@ The module stores no physical inventory and has no IndexCore/OpenList database
 or network dependency. Real clients, Journal cursors/projectors, Copy updates,
 visibility checks, Mutation Hints, and provider-specific behavior remain outside
 Gate 1.1.
+
+## Gate 1.2 IndexCore read adapter
+
+`internal/integrations/indexcore` owns a typed, server-side HTTP adapter for the
+accepted IndexCore Q4/Q5/Q8/Q9 read surface. Configure its base URL with
+`PANTA_INDEXCORE_BASE_URL`; this is an HTTP endpoint only and never an IndexCore
+database setting.
+
+The consumer-owned ports preserve the upstream semantics instead of flattening
+them: Q4 browses one parent hierarchy level and round-trips opaque cursors, Q5
+returns every canonical-path match plus its ambiguity flag, Q8 sends
+`after_seq` exactly as supplied and keeps per-root event order, and Q9 exposes a
+narrow read-only root status. Stable remote errors, transport failures,
+malformed responses, and unexpected statuses remain separately classifiable
+with `errors.Is`.
+
+The adapter uses only the standard HTTP client with a bounded timeout. Contract
+tests run against `httptest.Server`; no IndexCore process or database is needed.
+Journal cursor persistence, Catalog projection, OpenList integration, retries,
+Mutation Hints, scoped refresh, and root mutations remain outside Gate 1.2.

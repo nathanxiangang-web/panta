@@ -17,15 +17,15 @@ type knownPathIndexCore struct {
 	resource indexcore.ResourceContext
 }
 
-func (client knownPathIndexCore) Resolve(_ context.Context, request indexcore.ResolveRequest) (indexcore.ResourceContext, error) {
+func (client knownPathIndexCore) Resolve(_ context.Context, request indexcore.ResolveRequest) (indexcore.ResolveResult, error) {
 	resource := client.resource
 	resource.RootID = request.RootID
-	resource.CanonicalPath = request.Path
-	return resource, nil
+	resource.CanonicalPath = &request.Path
+	return indexcore.ResolveResult{Matches: []indexcore.ResourceContext{resource}}, nil
 }
 
-func (knownPathIndexCore) Browse(context.Context, indexcore.BrowseRequest) ([]indexcore.ResourceContext, error) {
-	return nil, nil
+func (knownPathIndexCore) Browse(context.Context, indexcore.BrowseRequest) (indexcore.ResourcePage, error) {
+	return indexcore.ResourcePage{}, nil
 }
 
 var _ indexcore.ReadPort = knownPathIndexCore{}
@@ -62,12 +62,16 @@ func TestGateZeroAcceptance(t *testing.T) {
 	}
 
 	resolveRequest := indexcore.ResolveRequest{RootID: "root-gate0", Path: "/known/artifact.bin"}
-	physical, err := (knownPathIndexCore{resource: indexcore.ResourceContext{
-		ResourceID: "resource-gate0", Name: "artifact.bin", SizeBytes: 4096, Present: true,
+	name, size := "artifact.bin", int64(4096)
+	resolved, err := (knownPathIndexCore{resource: indexcore.ResourceContext{
+		ResourceID: "resource-gate0", Name: &name, SizeBytes: &size, Presence: indexcore.ResourcePresent,
 	}}).Resolve(ctx, resolveRequest)
-	if err != nil || physical.RootID != resolveRequest.RootID || physical.CanonicalPath != resolveRequest.Path || !physical.Present {
-		t.Fatalf("Resolve(known path) = %#v, %v", physical, err)
+	if err != nil || len(resolved.Matches) != 1 || resolved.Matches[0].RootID != resolveRequest.RootID ||
+		resolved.Matches[0].CanonicalPath == nil || *resolved.Matches[0].CanonicalPath != resolveRequest.Path ||
+		resolved.Matches[0].Presence != indexcore.ResourcePresent {
+		t.Fatalf("Resolve(known path) = %#v, %v", resolved, err)
 	}
+	physical := resolved.Matches[0]
 
 	catalogRepository, err := NewCatalogRepository(pool)
 	if err != nil {

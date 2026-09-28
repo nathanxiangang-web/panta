@@ -12,8 +12,9 @@ const defaultEnvironment = "development"
 
 // Config contains the process settings needed by the Gate 0.1 skeleton.
 type Config struct {
-	Environment string
-	DatabaseURL string
+	Environment      string
+	DatabaseURL      string
+	IndexCoreBaseURL string
 }
 
 // Load reads configuration from environment variables and applies safe local
@@ -25,8 +26,9 @@ func Load() (Config, error) {
 	}
 
 	cfg := Config{
-		Environment: environment,
-		DatabaseURL: strings.TrimSpace(os.Getenv("PANTA_DATABASE_URL")),
+		Environment:      environment,
+		DatabaseURL:      strings.TrimSpace(os.Getenv("PANTA_DATABASE_URL")),
+		IndexCoreBaseURL: strings.TrimSpace(os.Getenv("PANTA_INDEXCORE_BASE_URL")),
 	}
 	if err := cfg.Validate(); err != nil {
 		return Config{}, err
