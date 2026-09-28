@@ -110,8 +110,39 @@ Compatibility is fail-closed:
 
 - missing required migrations are incompatible;
 - migrations unknown to the running binary are treated as future schema and are incompatible;
-- an older Panta binary must not silently run against a newer product schema.
+- an older Panta binary must not silently run against a newer product schema;
+- applied known migrations must form an ordered prefix of the embedded migration history; gaps/out-of-order history are incompatible and must not be auto-repaired.
 
 Panta product DB configuration remains independent from IndexCore DB configuration. Panta never obtains physical truth by reading or writing IndexCore PostgreSQL directly.
 
 Catalog domain packages remain persistence-agnostic; pgx belongs in the PostgreSQL adapter/infrastructure boundary.
+
+## D-013 — Job Engine is the durable control-plane safety boundary
+
+**Status:** Accepted
+
+All provider-changing operations must be represented by a durable Panta Job before external side effects occur.
+
+The Gate 0 Job Engine is intentionally small and provider-neutral. It is a state/claim/recovery kernel, not a workflow engine, scheduler platform, or autonomous agent controller.
+
+Minimum states:
+
+```text
+QUEUED
+RUNNING
+RETRY_WAIT
+RECOVERY_REQUIRED
+SUCCEEDED
+FAILED
+CANCELED
+```
+
+Terminal states are `SUCCEEDED`, `FAILED`, and `CANCELED`.
+
+Claiming is PostgreSQL-atomic and lease-based. Only the active lease owner may renew, succeed, or fail a running job.
+
+A lease expiry is ambiguous: an external side effect may already have occurred even if the worker disappeared. Therefore expired `RUNNING` work becomes `RECOVERY_REQUIRED` and is never blindly requeued/re-executed.
+
+Retry timing is explicit durable state, not a blind sleep loop. Provider-specific reconciliation/backoff remains outside the generic Job Engine.
+
+An optional product-level idempotency key prevents duplicate tracked command submission without embedding provider-specific identifiers in the generic job model.
