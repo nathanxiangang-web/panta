@@ -97,3 +97,21 @@ This is an implementation/toolchain choice, not a domain coupling decision:
 - the MVP remains a single-process modular monolith until real scaling evidence justifies a split.
 
 The Panta product database remains PostgreSQL as established by the MVP blueprint. Database schema and migrations are handled in a later bounded Gate 0 task, not in Gate 0.1.
+
+## D-012 — Panta owns an independent PostgreSQL schema and append-only migration history
+
+**Status:** Accepted
+
+Panta product persistence uses PostgreSQL through `pgx/v5`.
+
+Schema evolution uses ordered, append-only SQL migrations owned by Panta and recorded in a `schema_migrations` history. Runtime ORM auto-migration/schema generation is not used.
+
+Compatibility is fail-closed:
+
+- missing required migrations are incompatible;
+- migrations unknown to the running binary are treated as future schema and are incompatible;
+- an older Panta binary must not silently run against a newer product schema.
+
+Panta product DB configuration remains independent from IndexCore DB configuration. Panta never obtains physical truth by reading or writing IndexCore PostgreSQL directly.
+
+Catalog domain packages remain persistence-agnostic; pgx belongs in the PostgreSQL adapter/infrastructure boundary.
