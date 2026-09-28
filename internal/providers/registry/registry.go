@@ -11,8 +11,9 @@ import (
 )
 
 var (
-	ErrNotFound  = errors.New("provider not found")
-	ErrDuplicate = errors.New("provider already registered")
+	ErrNotFound     = errors.New("provider not found")
+	ErrDuplicate    = errors.New("provider already registered")
+	ErrInvalidEntry = errors.New("invalid provider registry entry")
 )
 
 // Entry groups the independently replaceable ports exposed by one provider.
@@ -34,11 +35,8 @@ func New() *Registry {
 }
 
 func (r *Registry) Register(entry Entry) error {
-	if entry.Descriptor.ID == "" {
-		return errors.New("provider id is required")
-	}
-	if entry.Storage == nil && entry.Downloader == nil && entry.Share == nil {
-		return errors.New("at least one provider port is required")
+	if err := validateEntry(entry); err != nil {
+		return err
 	}
 
 	r.mu.Lock()
@@ -47,6 +45,47 @@ func (r *Registry) Register(entry Entry) error {
 		return fmt.Errorf("%w: %s", ErrDuplicate, entry.Descriptor.ID)
 	}
 	r.entries[entry.Descriptor.ID] = entry
+	return nil
+}
+
+func validateEntry(entry Entry) error {
+	if entry.Descriptor.ID == "" {
+		return fmt.Errorf("%w: provider id is required", ErrInvalidEntry)
+	}
+
+	expectedCapabilities := contracts.CapabilitySet{
+		Storage:    entry.Storage != nil,
+		Downloader: entry.Downloader != nil,
+		Sharing:    entry.Share != nil,
+	}
+	if expectedCapabilities == (contracts.CapabilitySet{}) {
+		return fmt.Errorf("%w: at least one provider port is required", ErrInvalidEntry)
+	}
+	if entry.Descriptor.Capabilities != expectedCapabilities {
+		return fmt.Errorf("%w: descriptor capabilities do not match supplied ports", ErrInvalidEntry)
+	}
+
+	ports := []struct {
+		name string
+		port contracts.DescribedProvider
+	}{
+		{name: "storage", port: entry.Storage},
+		{name: "downloader", port: entry.Downloader},
+		{name: "share", port: entry.Share},
+	}
+	for _, candidate := range ports {
+		if candidate.port == nil {
+			continue
+		}
+		descriptor := candidate.port.Descriptor()
+		if descriptor.ID != entry.Descriptor.ID {
+			return fmt.Errorf("%w: %s port provider id %q does not match %q", ErrInvalidEntry, candidate.name, descriptor.ID, entry.Descriptor.ID)
+		}
+		if descriptor.Capabilities != entry.Descriptor.Capabilities {
+			return fmt.Errorf("%w: %s port capabilities do not match entry descriptor", ErrInvalidEntry, candidate.name)
+		}
+	}
+
 	return nil
 }
 

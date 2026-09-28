@@ -8,10 +8,12 @@ import (
 	"github.com/nathanxiangang-web/panta/internal/providers/contracts"
 )
 
-type storageDouble struct{}
+type storageDouble struct {
+	descriptor contracts.Descriptor
+}
 
-func (storageDouble) Descriptor() contracts.Descriptor {
-	return contracts.Descriptor{ID: "memory", Capabilities: contracts.CapabilitySet{Storage: true}}
+func (double storageDouble) Descriptor() contracts.Descriptor {
+	return double.descriptor
 }
 func (storageDouble) Stat(context.Context, contracts.TargetPath) (contracts.StorageObject, error) {
 	return contracts.StorageObject{}, nil
@@ -22,9 +24,10 @@ func (storageDouble) Access(context.Context, contracts.StorageObjectReference) (
 
 func TestRegistryStoresPortsByProviderID(t *testing.T) {
 	reg := New()
+	descriptor := contracts.Descriptor{ID: "memory", Capabilities: contracts.CapabilitySet{Storage: true}}
 	entry := Entry{
-		Descriptor: contracts.Descriptor{ID: "memory", Capabilities: contracts.CapabilitySet{Storage: true}},
-		Storage:    storageDouble{},
+		Descriptor: descriptor,
+		Storage:    storageDouble{descriptor: descriptor},
 	}
 	if err := reg.Register(entry); err != nil {
 		t.Fatalf("Register() error = %v", err)
@@ -39,5 +42,44 @@ func TestRegistryStoresPortsByProviderID(t *testing.T) {
 	}
 	if err := reg.Register(entry); !errors.Is(err, ErrDuplicate) {
 		t.Fatalf("duplicate Register() error = %v, want ErrDuplicate", err)
+	}
+}
+
+func TestRegistryRejectsContradictoryProviderIdentityAndCapabilities(t *testing.T) {
+	storageCapability := contracts.CapabilitySet{Storage: true}
+
+	tests := []struct {
+		name  string
+		entry Entry
+	}{
+		{
+			name: "port provider id differs from entry",
+			entry: Entry{
+				Descriptor: contracts.Descriptor{ID: "entry", Capabilities: storageCapability},
+				Storage:    storageDouble{descriptor: contracts.Descriptor{ID: "port", Capabilities: storageCapability}},
+			},
+		},
+		{
+			name: "advertised capability has no matching port",
+			entry: Entry{
+				Descriptor: contracts.Descriptor{ID: "memory", Capabilities: contracts.CapabilitySet{Downloader: true}},
+				Storage:    storageDouble{descriptor: contracts.Descriptor{ID: "memory", Capabilities: contracts.CapabilitySet{Downloader: true}}},
+			},
+		},
+		{
+			name: "port capability differs from entry",
+			entry: Entry{
+				Descriptor: contracts.Descriptor{ID: "memory", Capabilities: storageCapability},
+				Storage:    storageDouble{descriptor: contracts.Descriptor{ID: "memory", Capabilities: contracts.CapabilitySet{Storage: true, Sharing: true}}},
+			},
+		},
+	}
+
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			if err := New().Register(test.entry); !errors.Is(err, ErrInvalidEntry) {
+				t.Fatalf("Register() error = %v, want ErrInvalidEntry", err)
+			}
+		})
 	}
 }

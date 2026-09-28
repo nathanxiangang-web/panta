@@ -5,8 +5,13 @@ package contracts
 
 import (
 	"context"
+	"errors"
 	"time"
 )
+
+// ErrUnsupportedCapability lets an adapter report that an optional operation
+// is not available without leaking provider-specific error types.
+var ErrUnsupportedCapability = errors.New("unsupported provider capability")
 
 // ProviderID identifies a configured provider implementation without exposing
 // provider-specific identifiers in core contracts.
@@ -100,6 +105,16 @@ type ShareReference struct {
 	Value string
 }
 
+// ShareDetails contains the provider-neutral facts returned when inspecting a
+// share. A zero expiry means the provider did not report an expiry.
+type ShareDetails struct {
+	Reference ShareReference
+	Object    StorageObjectReference
+	Active    bool
+	CreatedAt time.Time
+	ExpiresAt time.Time
+}
+
 // DescribedProvider exposes product-level provider identity and capabilities.
 type DescribedProvider interface {
 	Descriptor() Descriptor
@@ -117,11 +132,14 @@ type DownloaderProvider interface {
 	DescribedProvider
 	StartDownload(context.Context, DownloadRequest) (TaskReference, error)
 	DownloadStatus(context.Context, TaskReference) (TaskStatus, error)
+	CancelDownload(context.Context, TaskReference) error
 }
 
-// ShareProvider creates and resolves provider shares.
+// ShareProvider creates, inspects, resolves, and revokes provider shares.
 type ShareProvider interface {
 	DescribedProvider
 	CreateShare(context.Context, ShareRequest) (ShareReference, error)
+	InspectShare(context.Context, ShareReference) (ShareDetails, error)
 	ShareAccess(context.Context, ShareReference) (AccessTarget, error)
+	RevokeShare(context.Context, ShareReference) error
 }
