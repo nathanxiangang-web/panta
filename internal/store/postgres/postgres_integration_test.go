@@ -12,6 +12,7 @@ import (
 	"github.com/jackc/pgx/v5/pgxpool"
 
 	"github.com/nathanxiangang-web/panta/internal/catalog"
+	"github.com/nathanxiangang-web/panta/migrations"
 )
 
 func TestPostgresMigrations(t *testing.T) {
@@ -167,6 +168,60 @@ func TestPostgresCatalogRoundTripAndConstraints(t *testing.T) {
 	duplicatePhysicalCopy.ID = "99999999-9999-4999-8999-999999999999"
 	if err := repository.CreateCopy(ctx, duplicatePhysicalCopy); err == nil {
 		t.Fatal("CreateCopy() accepted duplicate physical identity")
+	}
+}
+
+func TestPostgresRejectsGappedMigrationHistory(t *testing.T) {
+	ctx := context.Background()
+	pool := integrationPool(t, ctx)
+	resetTestSchema(t, ctx, pool)
+
+	if _, err := pool.Exec(ctx, `
+CREATE TABLE schema_migrations (
+    version bigint PRIMARY KEY,
+    name text NOT NULL,
+    checksum text NOT NULL,
+    applied_at timestamptz NOT NULL DEFAULT now()
+)`); err != nil {
+		t.Fatalf("create migration history: %v", err)
+	}
+
+	known := []migrations.Migration{
+		{Version: 1, Name: "gap_one", Checksum: "gap-one", Filename: "0001_gap_one.sql", SQL: "CREATE TABLE gap_migration_one (id bigint PRIMARY KEY)"},
+		{Version: 2, Name: "gap_two", Checksum: "gap-two", Filename: "0002_gap_two.sql", SQL: "CREATE TABLE gap_migration_two (id bigint PRIMARY KEY)"},
+	}
+	if _, err := pool.Exec(ctx,
+		"INSERT INTO schema_migrations (version, name, checksum) VALUES ($1, $2, $3)",
+		known[1].Version, known[1].Name, known[1].Checksum,
+	); err != nil {
+		t.Fatalf("record later migration: %v", err)
+	}
+
+	migrator := &Migrator{pool: pool, migrations: known}
+	status, err := migrator.Status(ctx)
+	if err != nil {
+		t.Fatalf("Status() error = %v", err)
+	}
+	if status.Compatible || len(status.HistoryGaps) != 1 || status.HistoryGaps[0].Version != 1 {
+		t.Fatalf("gapped status = %#v", status)
+	}
+	if _, err := migrator.Apply(ctx); !errors.Is(err, ErrIncompatibleSchema) {
+		t.Fatalf("Apply() error = %v, want ErrIncompatibleSchema", err)
+	}
+
+	var missingMigrationExecuted bool
+	if err := pool.QueryRow(ctx, "SELECT to_regclass('public.gap_migration_one') IS NOT NULL").Scan(&missingMigrationExecuted); err != nil {
+		t.Fatalf("inspect missing migration side effect: %v", err)
+	}
+	if missingMigrationExecuted {
+		t.Fatal("Apply() executed missing migration SQL after detecting a history gap")
+	}
+	var missingHistoryRow bool
+	if err := pool.QueryRow(ctx, "SELECT EXISTS (SELECT 1 FROM schema_migrations WHERE version = 1)").Scan(&missingHistoryRow); err != nil {
+		t.Fatalf("inspect missing migration history: %v", err)
+	}
+	if missingHistoryRow {
+		t.Fatal("Apply() recorded missing migration after detecting a history gap")
 	}
 }
 

@@ -33,6 +33,8 @@ type SchemaStatus struct {
 	LatestVersion  int64              `json:"latest_version"`
 	Applied        []AppliedMigration `json:"applied"`
 	Pending        []MigrationStatus  `json:"pending"`
+	HistoryGaps    []MigrationStatus  `json:"history_gaps"`
+	OutOfOrder     []AppliedMigration `json:"out_of_order"`
 	Unknown        []AppliedMigration `json:"unknown"`
 	Modified       []AppliedMigration `json:"modified"`
 }
@@ -85,7 +87,7 @@ CREATE TABLE IF NOT EXISTS schema_migrations (
 	if err != nil {
 		return SchemaStatus{}, err
 	}
-	if len(status.Unknown) > 0 || len(status.Modified) > 0 {
+	if len(status.HistoryGaps) > 0 || len(status.OutOfOrder) > 0 || len(status.Unknown) > 0 || len(status.Modified) > 0 {
 		return status, ErrIncompatibleSchema
 	}
 
@@ -132,7 +134,7 @@ func (m *Migrator) status(ctx context.Context, queryer migrationQueryer) (Schema
 
 	applied := make([]AppliedMigration, 0)
 	if historyExists {
-		rows, err := queryer.Query(ctx, "SELECT version, name, checksum, applied_at FROM schema_migrations ORDER BY version")
+		rows, err := queryer.Query(ctx, "SELECT version, name, checksum, applied_at FROM schema_migrations ORDER BY applied_at, version")
 		if err != nil {
 			return SchemaStatus{}, fmt.Errorf("read migration history: %w", err)
 		}
@@ -154,10 +156,12 @@ func (m *Migrator) status(ctx context.Context, queryer migrationQueryer) (Schema
 
 func compareMigrations(known []migrations.Migration, applied []AppliedMigration) SchemaStatus {
 	status := SchemaStatus{
-		Applied:  make([]AppliedMigration, 0, len(applied)),
-		Pending:  make([]MigrationStatus, 0),
-		Unknown:  make([]AppliedMigration, 0),
-		Modified: make([]AppliedMigration, 0),
+		Applied:     make([]AppliedMigration, 0, len(applied)),
+		Pending:     make([]MigrationStatus, 0),
+		HistoryGaps: make([]MigrationStatus, 0),
+		OutOfOrder:  make([]AppliedMigration, 0),
+		Unknown:     make([]AppliedMigration, 0),
+		Modified:    make([]AppliedMigration, 0),
 	}
 	knownByVersion := make(map[int64]migrations.Migration, len(known))
 	for _, migration := range known {
@@ -168,6 +172,12 @@ func compareMigrations(known []migrations.Migration, applied []AppliedMigration)
 	}
 
 	appliedVersions := make(map[int64]bool, len(applied))
+	knownIndexes := make(map[int64]int, len(known))
+	for index, migration := range known {
+		knownIndexes[migration.Version] = index
+	}
+	lastAppliedKnownIndex := -1
+	previousAppliedKnownIndex := -1
 	for _, migration := range applied {
 		status.Applied = append(status.Applied, migration)
 		appliedVersions[migration.Version] = true
@@ -179,18 +189,32 @@ func compareMigrations(known []migrations.Migration, applied []AppliedMigration)
 			status.Unknown = append(status.Unknown, migration)
 			continue
 		}
+		knownIndex := knownIndexes[migration.Version]
+		if knownIndex <= previousAppliedKnownIndex {
+			status.OutOfOrder = append(status.OutOfOrder, migration)
+		} else {
+			previousAppliedKnownIndex = knownIndex
+		}
+		if knownIndex > lastAppliedKnownIndex {
+			lastAppliedKnownIndex = knownIndex
+		}
 		if migration.Name != expected.Name || migration.Checksum != expected.Checksum {
 			status.Modified = append(status.Modified, migration)
 		}
 	}
 
-	for _, migration := range known {
+	for index, migration := range known {
 		if !appliedVersions[migration.Version] {
-			status.Pending = append(status.Pending, MigrationStatus{
+			missing := MigrationStatus{
 				Version: migration.Version, Name: migration.Name, Checksum: migration.Checksum,
-			})
+			}
+			if index < lastAppliedKnownIndex {
+				status.HistoryGaps = append(status.HistoryGaps, missing)
+			} else {
+				status.Pending = append(status.Pending, missing)
+			}
 		}
 	}
-	status.Compatible = len(status.Pending) == 0 && len(status.Unknown) == 0 && len(status.Modified) == 0
+	status.Compatible = len(status.Pending) == 0 && len(status.HistoryGaps) == 0 && len(status.OutOfOrder) == 0 && len(status.Unknown) == 0 && len(status.Modified) == 0
 	return status
 }
