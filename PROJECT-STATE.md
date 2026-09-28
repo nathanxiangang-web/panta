@@ -6,7 +6,7 @@
 
 **MVP implementation — Gate 1**
 
-Gate 0 is formally accepted and closed. Gate 1.1 is authorized and in progress.
+Gate 0 is formally accepted and closed. Gate 1.1 is accepted and merged. Gate 1.2 is authorized and in progress.
 
 ## Accepted baseline
 
@@ -159,11 +159,14 @@ Gate 0 closeout evidence:
 
 ### Gate 1.1 — Storage connection/binding persistence and root mapping
 
-Status: **AUTHORIZED / IN PROGRESS**
+Status: **ACCEPTED**
 
-Tracking: GitHub Issue #9
+Tracking: GitHub Issue #9 / PR #10
 
-Scope:
+Merged:
+- squash commit `84dd7223c2f12dcd50f7da32f698218c9df7cfa3`
+
+Accepted scope:
 - append-only StorageConnection / StorageBinding migration;
 - provider-neutral storage mapping domain;
 - PostgreSQL persistence;
@@ -171,11 +174,27 @@ Scope:
 - unique canonical IndexCore-root mapping;
 - real PostgreSQL constraint/round-trip tests.
 
+## Current bounded task
+
+### Gate 1.2 — Typed IndexCore HTTP read client and query contract alignment
+
+Status: **AUTHORIZED / IN PROGRESS**
+
+Tracking: GitHub Issue #11
+
+Scope:
+- refine Panta-owned IndexCore query contracts to match Q4/Q5/Q8/Q9 semantics;
+- typed server-side HTTP client;
+- Q4 parent hierarchy + opaque cursor;
+- Q5 all matches + ambiguity;
+- Q8 exact per-root after_seq Journal reads;
+- Q9 root status;
+- typed remote/transport/malformed-response errors;
+- httptest contract coverage.
+
 Explicitly deferred:
-- real IndexCore HTTP client;
-- Q4/Q5/Q8/Q9 calls;
-- Journal cursor/projector;
-- Copy projection;
+- Journal cursor persistence;
+- Catalog Projector / Copy projection;
 - real OpenList client;
 - Mutation Hint/scoped refresh;
 - 115/MCP;
@@ -192,8 +211,8 @@ The sequence may be refined by an architect decision, but later tasks must not b
 
 ## Gate 1 bounded task sequence
 
-- Gate 1.1 — StorageConnection / StorageBinding persistence — **IN PROGRESS**
-- Gate 1.2 — Typed IndexCore HTTP read client (Q4/Q5/Q8/Q9)
+- Gate 1.1 — StorageConnection / StorageBinding persistence — **ACCEPTED**
+- Gate 1.2 — Typed IndexCore HTTP read client (Q4/Q5/Q8/Q9) — **IN PROGRESS**
 - Gate 1.3 — Journal cursor persistence + idempotent unresolved Copy projector
 - Gate 1.4 — Controlled OpenList → IndexCore → Panta observation integration + Gate 1 closeout
 
@@ -223,6 +242,6 @@ Until the relevant gate is accepted, do not implement:
 
 ## Next architect action
 
-Review the Gate 1.1 PR for Issue #9 against StorageConnection/StorageBinding schema, mapping uniqueness, mount-path normalization, persistence boundaries, PostgreSQL evidence and scope control.
+Review the Gate 1.2 PR for Issue #11 against Q4/Q5/Q8/Q9 semantic fidelity, typed error behavior, no direct IndexCore DB coupling, httptest evidence and green CI.
 
-Do not authorize Gate 1.2 until Gate 1.1 is accepted.
+Do not authorize Gate 1.3 until Gate 1.2 is accepted.
