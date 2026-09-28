@@ -153,8 +153,9 @@ catalog/jobs ← internal/store/postgres → Panta PostgreSQL
   download start/status/cancel, share create/inspect/access/revoke, opaque
   references, and the provider-neutral unsupported-operation error.
 - The Gate 0 acceptance test composes the registry, a known-path IndexCore port
-  double, migrations 0001 and 0002, Catalog persistence, and a generic durable
-  Job without coupling those modules or adding an acquisition workflow.
+  double, the current append-only migration chain, Catalog persistence, and a
+  generic durable Job without coupling those modules or adding an acquisition
+  workflow.
 - `internal/architecture` automatically guards Catalog, Jobs, and the IndexCore
   port from forbidden database, provider, 115, and cross-module imports.
 - `.github/workflows/gate0.yml` runs unit/contract tests, race detection, vet,
@@ -163,3 +164,30 @@ catalog/jobs ← internal/store/postgres → Panta PostgreSQL
 
 No 115 adapter, real OpenList/IndexCore client, worker loop, Search, Agent,
 authentication, API, or UI is part of Gate 0.4.
+
+## Gate 1.1 storage root mapping
+
+`internal/storage` owns the provider-neutral StorageConnection and
+StorageBinding model and its persistence port. A binding records the product
+mapping from one connection and normalized OpenList mount path to one canonical
+external IndexCore root ID:
+
+```text
+StorageConnection ── StorageBinding ── OpenList mount path
+                              └─────── IndexCore root_id (external identifier)
+```
+
+`internal/store/postgres` implements the port. Migration
+`0003_storage_bindings.sql` enforces the connection foreign key, globally unique
+IndexCore root mapping, unique connection/mount mapping, the small
+ACTIVE/DISABLED status sets, and canonical mount-path storage.
+
+Mount paths use absolute slash form. `/` is the root; repeated and trailing
+slashes normalize away for non-root mounts. Empty, relative, backslash, `.`, and
+`..` component forms are rejected. `credential_ref` is nullable opaque metadata
+only; credentials and secrets are not stored in these rows.
+
+The module stores no physical inventory and has no IndexCore/OpenList database
+or network dependency. Real clients, Journal cursors/projectors, Copy updates,
+visibility checks, Mutation Hints, and provider-specific behavior remain outside
+Gate 1.1.

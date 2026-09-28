@@ -46,8 +46,8 @@ func TestGateZeroAcceptance(t *testing.T) {
 		t.Fatalf("Apply() error = %v", err)
 	}
 	assertCurrentSchema(t, status)
-	if len(status.Applied) != 2 || status.Applied[0].Version != 1 || status.Applied[1].Version != 2 {
-		t.Fatalf("applied migrations = %#v, want ordered 0001 + 0002", status.Applied)
+	if len(status.Applied) != 3 || status.Applied[0].Version != 1 || status.Applied[1].Version != 2 || status.Applied[2].Version != 3 {
+		t.Fatalf("applied migrations = %#v, want ordered 0001 + 0002 + 0003", status.Applied)
 	}
 
 	mock := testprovider.New()
