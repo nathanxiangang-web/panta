@@ -6,7 +6,7 @@
 
 **MVP implementation — Gate 0**
 
-Architecture baseline is accepted. Implementation has started with the first bounded Gate 0 task.
+Gate 0.1 is accepted and merged. Gate 0.2 is authorized and in progress.
 
 ## Accepted baseline
 
@@ -26,6 +26,7 @@ Architecture baseline is accepted. Implementation has started with the first bou
 - Initial backend implementation baseline: Go 1.27.1
 - MVP deployment shape: single-process modular monolith
 - Product DB: PostgreSQL, kept separate from IndexCore DB
+- Product schema uses append-only SQL migrations and fail-closed schema compatibility
 
 ## Active gate
 
@@ -56,33 +57,56 @@ Acceptance:
 - no code writes to IndexCore DB;
 - architecture docs match actual package dependencies.
 
-### Current bounded task
+## Completed bounded tasks
 
-**Gate 0.1 — Bootstrap Go skeleton and freeze core ports**
+### Gate 0.1 — Bootstrap Go skeleton and freeze core ports
 
-Tracking: GitHub Issue #1
+Status: **ACCEPTED**
 
-Scope:
+Tracking: GitHub Issue #1 / PR #2
+
+Merged:
+- squash commit `f1cb51fcd8546002bf05d0b5e7f50dff38365d3c`
+
+Accepted scope:
 - Go module and runnable binary;
 - initial module/package boundaries;
 - provider-neutral provider ports;
 - IndexCore/OpenList ports;
-- in-memory test doubles and build/test harness.
+- in-memory test doubles and build/test harness;
+- provider registry identity/capability validation.
 
-Explicitly deferred from Gate 0.1:
-- PostgreSQL migrations/schema;
-- real 115 adapter;
-- real IndexCore/OpenList network calls;
-- complex Job Engine implementation;
-- auth/share/usage;
-- search;
-- agent integration;
-- UI.
+Known follow-up:
+- repository CI is not yet present; add before Gate 0 closeout.
+
+## Current bounded task
+
+### Gate 0.2 — PostgreSQL migrations and minimum Catalog persistence
+
+Status: **AUTHORIZED / IN PROGRESS**
+
+Tracking: GitHub Issue #3
+
+Scope:
+- independent Panta PostgreSQL configuration/connection boundary;
+- ordered append-only migration mechanism;
+- schema compatibility/status;
+- minimum Asset / Release / Variant / Copy schema;
+- persistence ports/adapters and PostgreSQL round-trip tests;
+- unresolved Copy support with nullable `variant_id`.
+
+Explicitly deferred:
+- StorageConnection / StorageBinding tables;
+- Job Engine durability;
+- real IndexCore/OpenList clients;
+- IndexCore Journal projector;
+- 115 provider;
+- auth/usage/search/agent/UI.
 
 ## Planned Gate 0 task sequence
 
-- Gate 0.1 — Skeleton + first ports
-- Gate 0.2 — Product DB migrations + Asset/Release/Variant/Copy minimum persistence
+- Gate 0.1 — Skeleton + first ports — **ACCEPTED**
+- Gate 0.2 — Product DB migrations + Asset/Release/Variant/Copy minimum persistence — **IN PROGRESS**
 - Gate 0.3 — Job Engine minimum durable state model
 - Gate 0.4 — Mock provider + contract test completion + Gate 0 integration acceptance
 
@@ -114,6 +138,6 @@ Until the relevant gate is accepted, do not implement:
 
 ## Next architect action
 
-Review the developer PR for Issue #1 against its exact scope, dependency direction, tests and evidence.
+Review the Gate 0.2 PR for Issue #3 against migration reproducibility, schema boundaries, persistence dependency direction, PostgreSQL integration evidence and scope control.
 
-Do not authorize Gate 0.2 until Gate 0.1 is accepted (or an explicit architect exception is recorded).
+Do not authorize Gate 0.3 until Gate 0.2 is accepted (or an explicit architect exception is recorded).
