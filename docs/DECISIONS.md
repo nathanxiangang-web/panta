@@ -186,3 +186,19 @@ IndexCore Query API remains read-only from Panta's perspective.
 Mutation Hint is a separate trusted internal transport. A successful Hint acceptance is only a durable signal and never counts as proof that a resource is canonically visible. Canonical success must still be observed through IndexCore Query/Journal.
 
 Panta owns consumer DTOs, typed errors, cursors, and projection state. It does not reuse IndexCore internal Go types.
+
+
+## D-016 — Panta preserves IndexCore query semantics instead of simplifying them away
+
+**Status:** Accepted
+
+Panta's IndexCore ports are consumer-owned, but they must faithfully preserve the semantics of the accepted external IndexCore contract.
+
+In particular:
+- Q4 is hierarchy-by-parent with opaque generation-bound pagination; it is not a path browse API and not a flattened root listing.
+- Q5 path resolution returns all matches plus an ambiguity flag. Panta must never silently choose one canonical-path match.
+- Resource presence remains an explicit canonical state rather than a boolean that would erase retained/tombstone meaning.
+- Q8 Journal ordering is per root only. The HTTP `after_seq` cursor is exclusive; consumers reuse the last event sequence actually observed and never increment it.
+- Stable remote error categories remain typed and distinguishable from transport and malformed-response failures.
+
+Gate 0 placeholder contracts may be refined when real external semantics prove them insufficient. Preserving an obsolete simplified contract is not considered backward compatibility when it would hide correctness-critical behavior.
