@@ -6,7 +6,7 @@
 
 **MVP implementation — Gate 1**
 
-Gate 0 is formally accepted and closed. Gate 1.1 and Gate 1.2 are accepted and merged. Gate 1.3 is authorized and in progress.
+Gate 0 is formally accepted and closed. Gate 1.1, Gate 1.2, and Gate 1.3 are accepted and merged. Gate 1.4 is authorized and in progress.
 
 ## Accepted baseline
 
@@ -207,9 +207,12 @@ Explicitly deferred:
 
 ### Gate 1.3 — Durable Journal cursor and idempotent unresolved Copy projector
 
-Status: **AUTHORIZED / IN PROGRESS**
+Status: **ACCEPTED**
 
-Tracking: GitHub Issue #13
+Tracking: GitHub Issue #13 / PR #14
+
+Merged:
+- squash commit `5bcffae7ab24ec8a7fd42d48cdd6ee11e4876e87`
 
 Scope:
 - per-StorageBinding durable Journal cursor;
@@ -228,6 +231,35 @@ Explicitly deferred:
 - 115/MCP;
 - auth/search/agent/API/UI.
 
+## Current bounded task
+
+### Gate 1.4 — Controlled OpenList → IndexCore → Panta observation E2E and Gate 1 closeout
+
+Status: **AUTHORIZED / IN PROGRESS**
+
+Tracking: GitHub Issue #15
+
+Pinned external integration:
+- IndexCore v0.4.0-alpha.1
+- commit `6f0eec85c59bd8cbe55011b0d9e512e0cafd6615`
+
+Scope:
+- test-only OpenList-compatible controlled fixture;
+- real external IndexCore OpenList Collector / Canonical / Journal path;
+- real Panta Q4/Q5/Q8 client and PostgreSQL projector;
+- direct known-path acceptance without Search;
+- repeat-idempotency and additive-change evidence;
+- GitHub Actions observation E2E;
+- Gate 1 documentation/CI closeout.
+
+Explicitly deferred:
+- production Panta OpenList scanner;
+- post-download visibility verifier;
+- Mutation Hint/scoped refresh;
+- continuous Journal polling;
+- 115/MCP/acquisition;
+- classification/search/auth/share/agent/API/UI.
+
 ## Planned Gate 0 task sequence
 
 - Gate 0.1 — Skeleton + first ports — **ACCEPTED**
@@ -241,8 +273,8 @@ The sequence may be refined by an architect decision, but later tasks must not b
 
 - Gate 1.1 — StorageConnection / StorageBinding persistence — **ACCEPTED**
 - Gate 1.2 — Typed IndexCore HTTP read client (Q4/Q5/Q8/Q9) — **ACCEPTED**
-- Gate 1.3 — Journal cursor persistence + idempotent unresolved Copy projector — **IN PROGRESS**
-- Gate 1.4 — Controlled OpenList → IndexCore → Panta observation integration + Gate 1 closeout
+- Gate 1.3 — Journal cursor persistence + idempotent unresolved Copy projector — **ACCEPTED**
+- Gate 1.4 — Controlled OpenList → IndexCore → Panta observation integration + Gate 1 closeout — **IN PROGRESS**
 
 ## Planned project sequence
 
@@ -270,6 +302,6 @@ Until the relevant gate is accepted, do not implement:
 
 ## Next architect action
 
-Review the Gate 1.3 PR for Issue #13 against atomic cursor+Copy transaction semantics, idempotent physical projection, binding integrity, rollback/concurrency evidence and green CI.
+Review the Gate 1.4 PR for Issue #15 against the controlled real OpenList → IndexCore → Panta chain, pinned external version, direct-path/no-search acceptance, idempotent replay, database separation and green GitHub E2E CI.
 
-Do not authorize Gate 1.4 until Gate 1.3 is accepted.
+Do not authorize Gate 2 until Gate 1.4 is accepted and Gate 1 is formally closed.
