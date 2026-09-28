@@ -131,3 +131,35 @@ retried because an external side effect may already have happened. Only the
 active, unexpired lease owner can renew, succeed, fail, or schedule a retry.
 Gate 0.3 deliberately contains no worker loop, provider execution, backoff
 policy, job DAG, or event/audit table.
+
+## Gate 0.4 closeout verification
+
+Gate 0 closes through test-only composition, not by introducing a real
+provider. `internal/providers/testprovider` is a deterministic in-memory
+implementation of the frozen Storage, Downloader, and Share ports. It is used
+by the reusable `internal/providers/contracttest` suite and is not registered by
+the production application.
+
+The Gate 0 dependency and test boundaries are:
+
+```text
+core domains → Panta-owned ports ← production adapters (future gates)
+                              ↖ testprovider + contracttest (tests only)
+
+catalog/jobs ← internal/store/postgres → Panta PostgreSQL
+```
+
+- Provider conformance covers descriptor consistency, storage stat/access,
+  download start/status/cancel, share create/inspect/access/revoke, opaque
+  references, and the provider-neutral unsupported-operation error.
+- The Gate 0 acceptance test composes the registry, a known-path IndexCore port
+  double, migrations 0001 and 0002, Catalog persistence, and a generic durable
+  Job without coupling those modules or adding an acquisition workflow.
+- `internal/architecture` automatically guards Catalog, Jobs, and the IndexCore
+  port from forbidden database, provider, 115, and cross-module imports.
+- `.github/workflows/gate0.yml` runs unit/contract tests, race detection, vet,
+  both command builds, PostgreSQL 16 integration tests, and migration
+  apply/status checks on pull requests and pushes to `main`.
+
+No 115 adapter, real OpenList/IndexCore client, worker loop, Search, Agent,
+authentication, API, or UI is part of Gate 0.4.
