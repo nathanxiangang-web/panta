@@ -35,6 +35,13 @@ func TestGateZeroDomainImportBoundaries(t *testing.T) {
 			packagePath: "github.com/nathanxiangang-web/panta/internal/integrations/indexcore",
 			forbidden:   []string{"github.com/jackc/pgx", "database/sql", "/providers/115"},
 		},
+		{
+			packagePath: "github.com/nathanxiangang-web/panta/internal/storage",
+			forbidden: []string{
+				"github.com/jackc/pgx", "database/sql", "/internal/providers", "/providers/115",
+				"/internal/integrations/indexcore", "/internal/integrations/openlist",
+			},
+		},
 	}
 
 	for _, test := range tests {
@@ -57,6 +64,7 @@ func TestGateZeroCoreDoesNotImportConcrete115Provider(t *testing.T) {
 		"github.com/nathanxiangang-web/panta/internal/catalog",
 		"github.com/nathanxiangang-web/panta/internal/jobs",
 		"github.com/nathanxiangang-web/panta/internal/resourceview",
+		"github.com/nathanxiangang-web/panta/internal/storage",
 	} {
 		listed := goList(t, packagePath)
 		for _, imported := range listed.Imports {
