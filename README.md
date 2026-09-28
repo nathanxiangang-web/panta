@@ -109,3 +109,25 @@ PostgreSQL integration tests require a dedicated disposable database named
 ```text
 PANTA_TEST_DATABASE_URL='postgres://user:password@127.0.0.1:5432/panta_test?sslmode=disable' make test-integration
 ```
+
+## Gate 0.3 durable jobs
+
+`internal/jobs` owns the provider-neutral Job model, frozen states, commands,
+errors, and Repository port. `internal/store/postgres` implements that port with
+atomic PostgreSQL claims and lease-checked transitions. The dependency remains:
+
+```text
+future application/worker → internal/jobs ← internal/store/postgres
+```
+
+The generic engine stores opaque JSON payloads and never imports provider,
+IndexCore, OpenList, auth, or agent types. Future job types extend through
+product-level `job_type` and payload contracts outside the state kernel; they do
+not add provider-specific columns to `jobs`.
+
+Claimable work is limited to `QUEUED` and due `RETRY_WAIT` jobs. A running job
+with an expired lease moves to `RECOVERY_REQUIRED`; it is not automatically
+retried because an external side effect may already have happened. Only the
+active, unexpired lease owner can renew, succeed, fail, or schedule a retry.
+Gate 0.3 deliberately contains no worker loop, provider execution, backoff
+policy, job DAG, or event/audit table.
