@@ -146,3 +146,22 @@ A lease expiry is ambiguous: an external side effect may already have occurred e
 Retry timing is explicit durable state, not a blind sleep loop. Provider-specific reconciliation/backoff remains outside the generic Job Engine.
 
 An optional product-level idempotency key prevents duplicate tracked command submission without embedding provider-specific identifiers in the generic job model.
+
+
+## D-014 — Active job leases are fenced by claim generation and database time
+
+**Status:** Accepted
+
+A running Job lease is identified by more than worker name.
+
+Every successful claim increments the Job attempt/generation. Active-lease mutations must prove:
+- Job ID;
+- lease owner;
+- expected claim generation;
+- currently unexpired lease.
+
+This prevents a stale execution from an older claim from mutating a newer claim even when both use the same worker ID.
+
+PostgreSQL time is authoritative for lease-expiry authorization and expired-lease recovery eligibility. Caller-supplied timestamps must not be able to revive an expired lease or force early recovery.
+
+The existing `attempt_count` is the MVP fencing generation. A separate lease token is not required unless later provider execution proves a stronger primitive is necessary.
