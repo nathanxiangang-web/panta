@@ -52,3 +52,33 @@ Panta MVP uses a deliberately small team model:
 - **Developer:** implements one accepted stage at a time, with tests and evidence.
 
 No stage starts because “the code seems ready.” It starts only after the previous gate is accepted.
+
+## Gate 0.1 backend skeleton
+
+The backend requires Go 1.27.1. The Gate 0.1 skeleton can be verified with:
+
+```text
+make test
+make build
+```
+
+The binary reads `PANTA_ENV` (default: `development`) and stays alive until it
+receives an interrupt or termination signal. No provider or external service is
+required to build or start it.
+
+Package dependencies follow the modular-monolith boundary:
+
+```text
+cmd/panta → internal/app → modules and Panta-owned ports
+                                  ↑
+                    future adapters/integrations
+```
+
+- `catalog`, `resourceview`, `acquisition`, and `jobs` own product behavior.
+- `providers/contracts` owns provider-neutral ports; `providers/registry` binds
+  implementations only at the composition boundary.
+- `integrations/indexcore` and `integrations/openlist` are Panta-owned external
+  service ports. They expose no upstream database or implementation types.
+- In-memory doubles live only in tests. There is no real provider, persistence,
+  network integration, search, agent, authentication, HTTP API, or UI in Gate
+  0.1.
