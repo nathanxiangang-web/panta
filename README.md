@@ -82,3 +82,30 @@ cmd/panta → internal/app → modules and Panta-owned ports
 - In-memory doubles live only in tests. There is no real provider, persistence,
   network integration, search, agent, authentication, HTTP API, or UI in Gate
   0.1.
+
+## Gate 0.2 product database
+
+Panta product state uses a PostgreSQL database that is configured independently
+through `PANTA_DATABASE_URL`. It is never shared with or inferred from an
+IndexCore database setting.
+
+Schema changes are ordered SQL files in `migrations/`. Applied versions, names,
+and checksums are recorded in `schema_migrations`; missing, changed, or unknown
+future migrations make schema status incompatible. Apply or inspect them with:
+
+```text
+make db-migrate
+make db-status
+```
+
+`internal/catalog` owns the Asset → Release → Variant → Copy types and the
+persistence port. The pgx/v5 implementation is isolated in
+`internal/store/postgres`. `storage_binding_id` is opaque at this gate, and a
+Copy may have a null `variant_id` while awaiting logical classification.
+
+PostgreSQL integration tests require a dedicated disposable database named
+`panta_test` or ending in `_test`; the tests recreate its `public` schema:
+
+```text
+PANTA_TEST_DATABASE_URL='postgres://user:password@127.0.0.1:5432/panta_test?sslmode=disable' make test-integration
+```
