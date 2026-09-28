@@ -69,9 +69,10 @@ type ClaimRequest struct {
 }
 
 type LeaseRequest struct {
-	ID    JobID
-	Owner string
-	Now   time.Time
+	ID              JobID
+	Owner           string
+	ExpectedAttempt int
+	Now             time.Time
 }
 
 type RenewLeaseRequest struct {
@@ -100,7 +101,8 @@ type RecoveryRequest struct {
 }
 
 // Repository persists the minimum durable job state machine. Implementations
-// must make ClaimNext atomic and enforce active lease ownership on mutations.
+// must make ClaimNext atomic and enforce owner plus claim-generation fencing on
+// every active-lease mutation. Lease expiry authorization uses database time.
 type Repository interface {
 	Create(context.Context, CreateRequest) (Job, error)
 	Get(context.Context, JobID) (Job, error)

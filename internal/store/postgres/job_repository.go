@@ -83,7 +83,6 @@ func (repository *JobRepository) ClaimNext(ctx context.Context, request jobs.Cla
 	if strings.TrimSpace(request.Owner) == "" || request.Now.IsZero() || request.LeaseDuration <= 0 {
 		return jobs.Job{}, jobs.ErrInvalidArgument
 	}
-	leaseExpiresAt := request.Now.Add(request.LeaseDuration)
 	row := repository.pool.QueryRow(ctx, `
 WITH candidate AS (
     SELECT job_id
@@ -102,12 +101,12 @@ SET state = 'RUNNING',
     attempt_count = job.attempt_count + 1,
     next_attempt_at = NULL,
     lease_owner = $2,
-    lease_expires_at = $3,
+    lease_expires_at = CURRENT_TIMESTAMP + ($3 * interval '1 microsecond'),
     started_at = COALESCE(job.started_at, $1),
     updated_at = $1
 FROM candidate
 WHERE job.job_id = candidate.job_id
-RETURNING `+updatedJobColumns, request.Now, request.Owner, leaseExpiresAt)
+RETURNING `+updatedJobColumns, request.Now, request.Owner, request.LeaseDuration.Microseconds())
 	job, err := scanJob(row)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return jobs.Job{}, jobs.ErrNoClaimableJob
@@ -124,10 +123,11 @@ func (repository *JobRepository) RenewLease(ctx context.Context, request jobs.Re
 	}
 	row := repository.pool.QueryRow(ctx, `
 UPDATE jobs AS job
-SET lease_expires_at = $4, updated_at = $3
-WHERE job_id = $1 AND state = 'RUNNING' AND lease_owner = $2 AND lease_expires_at > $3
+SET lease_expires_at = CURRENT_TIMESTAMP + ($5 * interval '1 microsecond'), updated_at = $4
+WHERE job_id = $1 AND state = 'RUNNING' AND lease_owner = $2
+  AND attempt_count = $3 AND lease_expires_at > CURRENT_TIMESTAMP
 RETURNING `+updatedJobColumns,
-		string(request.ID), request.Owner, request.Now, request.Now.Add(request.LeaseDuration),
+		string(request.ID), request.Owner, request.ExpectedAttempt, request.Now, request.LeaseDuration.Microseconds(),
 	)
 	return repository.finishLeaseMutation(ctx, request.ID, row, "renew lease")
 }
@@ -139,9 +139,10 @@ func (repository *JobRepository) Succeed(ctx context.Context, request jobs.Lease
 	row := repository.pool.QueryRow(ctx, `
 UPDATE jobs AS job
 SET state = 'SUCCEEDED', lease_owner = NULL, lease_expires_at = NULL,
-    next_attempt_at = NULL, last_error = NULL, finished_at = $3, updated_at = $3
-WHERE job_id = $1 AND state = 'RUNNING' AND lease_owner = $2 AND lease_expires_at > $3
-RETURNING `+updatedJobColumns, string(request.ID), request.Owner, request.Now)
+    next_attempt_at = NULL, last_error = NULL, finished_at = $4, updated_at = $4
+WHERE job_id = $1 AND state = 'RUNNING' AND lease_owner = $2
+  AND attempt_count = $3 AND lease_expires_at > CURRENT_TIMESTAMP
+RETURNING `+updatedJobColumns, string(request.ID), request.Owner, request.ExpectedAttempt, request.Now)
 	return repository.finishLeaseMutation(ctx, request.ID, row, "succeed job")
 }
 
@@ -152,9 +153,10 @@ func (repository *JobRepository) Fail(ctx context.Context, request jobs.FailureR
 	row := repository.pool.QueryRow(ctx, `
 UPDATE jobs AS job
 SET state = 'FAILED', lease_owner = NULL, lease_expires_at = NULL,
-    next_attempt_at = NULL, last_error = $4, finished_at = $3, updated_at = $3
-WHERE job_id = $1 AND state = 'RUNNING' AND lease_owner = $2 AND lease_expires_at > $3
-RETURNING `+updatedJobColumns, string(request.ID), request.Owner, request.Now, request.Error)
+    next_attempt_at = NULL, last_error = $5, finished_at = $4, updated_at = $4
+WHERE job_id = $1 AND state = 'RUNNING' AND lease_owner = $2
+  AND attempt_count = $3 AND lease_expires_at > CURRENT_TIMESTAMP
+RETURNING `+updatedJobColumns, string(request.ID), request.Owner, request.ExpectedAttempt, request.Now, request.Error)
 	return repository.finishLeaseMutation(ctx, request.ID, row, "fail job")
 }
 
@@ -167,13 +169,14 @@ UPDATE jobs AS job
 SET state = CASE WHEN attempt_count >= max_attempts THEN 'FAILED' ELSE 'RETRY_WAIT' END,
     lease_owner = NULL,
     lease_expires_at = NULL,
-    next_attempt_at = CASE WHEN attempt_count >= max_attempts THEN NULL ELSE $5::timestamptz END,
-    last_error = $4,
-    finished_at = CASE WHEN attempt_count >= max_attempts THEN $3 ELSE NULL END,
-    updated_at = $3
-WHERE job_id = $1 AND state = 'RUNNING' AND lease_owner = $2 AND lease_expires_at > $3
+    next_attempt_at = CASE WHEN attempt_count >= max_attempts THEN NULL ELSE $6::timestamptz END,
+    last_error = $5,
+    finished_at = CASE WHEN attempt_count >= max_attempts THEN $4::timestamptz ELSE NULL END,
+    updated_at = $4
+WHERE job_id = $1 AND state = 'RUNNING' AND lease_owner = $2
+  AND attempt_count = $3 AND lease_expires_at > CURRENT_TIMESTAMP
 RETURNING `+updatedJobColumns,
-		string(request.ID), request.Owner, request.Now, request.Error, request.RetryAt,
+		string(request.ID), request.Owner, request.ExpectedAttempt, request.Now, request.Error, request.RetryAt,
 	)
 	return repository.finishLeaseMutation(ctx, request.ID, row, "schedule job retry")
 }
@@ -209,7 +212,7 @@ func (repository *JobRepository) MarkExpiredRunningRecoveryRequired(ctx context.
 WITH expired AS (
     SELECT job_id
     FROM jobs
-    WHERE state = 'RUNNING' AND lease_expires_at <= $1
+    WHERE state = 'RUNNING' AND lease_expires_at <= CURRENT_TIMESTAMP
     ORDER BY lease_expires_at, job_id
     FOR UPDATE SKIP LOCKED
     LIMIT $2
@@ -258,7 +261,7 @@ func (repository *JobRepository) finishLeaseMutation(ctx context.Context, id job
 }
 
 func validateLeaseRequest(request jobs.LeaseRequest) error {
-	if request.ID == "" || strings.TrimSpace(request.Owner) == "" || request.Now.IsZero() {
+	if request.ID == "" || strings.TrimSpace(request.Owner) == "" || request.ExpectedAttempt < 1 || request.Now.IsZero() {
 		return jobs.ErrInvalidArgument
 	}
 	return nil
