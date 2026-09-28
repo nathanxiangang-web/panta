@@ -165,3 +165,24 @@ This prevents a stale execution from an older claim from mutating a newer claim 
 PostgreSQL time is authoritative for lease-expiry authorization and expired-lease recovery eligibility. Caller-supplied timestamps must not be able to revive an expired lease or force early recovery.
 
 The existing `attempt_count` is the MVP fencing generation. A separate lease token is not required unless later provider execution proves a stronger primitive is necessary.
+
+
+## D-015 — Panta consumes IndexCore through its external Query/Hint contracts only
+
+**Status:** Accepted
+
+Panta treats IndexCore as an independent infrastructure service and never imports IndexCore internals or accesses its PostgreSQL database directly.
+
+For the observation plane:
+- Q4 hierarchy reads back known-root browsing;
+- Q5 canonical path resolution backs direct known-path access;
+- Q8 per-root Journal is the canonical projection feed;
+- Q9 root status may support health/generation awareness where needed.
+
+Journal cursor semantics are owned by the IndexCore HTTP contract: `after_seq` is exclusive and the next request reuses the **last event_seq actually observed**, without incrementing it.
+
+IndexCore Query API remains read-only from Panta's perspective.
+
+Mutation Hint is a separate trusted internal transport. A successful Hint acceptance is only a durable signal and never counts as proof that a resource is canonically visible. Canonical success must still be observed through IndexCore Query/Journal.
+
+Panta owns consumer DTOs, typed errors, cursors, and projection state. It does not reuse IndexCore internal Go types.
