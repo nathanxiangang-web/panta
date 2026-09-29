@@ -6,7 +6,7 @@
 
 **MVP implementation — Gate 3**
 
-Gate 0, Gate 1, and Gate 2 are formally accepted and closed. Gate 3.1 and Gate 3.2 are accepted and merged. Gate 3.3 is authorized and in progress.
+Gate 0, Gate 1, and Gate 2 are formally accepted and closed. Gate 3.1, Gate 3.2, and Gate 3.3 are accepted and merged. Gate 3.4 is authorized and in progress.
 
 ## Accepted baseline
 
@@ -481,9 +481,22 @@ Explicitly deferred:
 
 ### Gate 3.3 — Provider target mapping and side-effect-free acquisition execution input
 
-Status: **AUTHORIZED / IN PROGRESS**
+Status: **ACCEPTED**
 
-Tracking: GitHub Issue #27
+Tracking: GitHub Issue #27 / PR #28
+
+Merged:
+- squash commit `592596acca7ab7b7916de51bad0bc6689d9b0733`
+
+Acceptance evidence:
+- explicit provider_scope is independent from OpenList mount and IndexCore root;
+- observation-only bindings remain valid with provider_scope NULL;
+- acquisition requires ACTIVE binding + ACTIVE connection + explicit provider scope;
+- ACTIVE Manifest resolves exactly to provider-neutral DownloadRequest;
+- source_ref/provider_scope remain opaque and unchanged;
+- no provider registry lookup/provider call/OpenList/IndexCore side effect;
+- GitHub Actions run `36598697218` fully green;
+- migration history compatible at version 7.
 
 Scope:
 - append-only nullable StorageBinding.provider_scope;
@@ -502,6 +515,34 @@ Explicitly deferred:
 - real 115 adapter;
 - Source Resolver / magnet normalization;
 - Job worker loop;
+- OpenList visibility verifier;
+- Mutation Hint / scoped refresh;
+- canonical confirmation / READY;
+- auth/quota/API/UI.
+
+## Current bounded task
+
+### Gate 3.4 — Durable provider-task linkage and restart-safe downloader execution step
+
+Status: **AUTHORIZED / IN PROGRESS**
+
+Tracking: GitHub Issue #29
+
+Scope:
+- durable provider-neutral provider-task linkage;
+- provider registry lookup at the application boundary;
+- one-shot DownloaderProvider StartDownload / DownloadStatus execution step;
+- existing durable task is always polled, never recreated;
+- provider task state maps to provider-neutral execution outcomes only;
+- provider success is not READY;
+- uncertain side effect after successful StartDownload but failed persistence fails closed;
+- restart/replay must not duplicate external provider tasks.
+
+Explicitly deferred:
+- real 115 adapter;
+- Source Resolver / magnet normalization;
+- worker polling loop;
+- Manifest transition to AWAITING_VISIBILITY;
 - OpenList visibility verifier;
 - Mutation Hint / scoped refresh;
 - canonical confirmation / READY;
@@ -549,6 +590,6 @@ Until the relevant gate is accepted, do not implement:
 
 ## Next architect action
 
-Review the Gate 3.3 PR for Issue #27 against explicit provider-scope mapping, observation/acquisition separation, active connection/binding validation, exact provider-neutral execution input assembly, absence of side effects, and full Gate 1/2/3.1/3.2 regression.
+Review the Gate 3.4 PR for Issue #29 against durable provider-task linkage, no-recreate replay semantics, provider-neutral status mapping, uncertainty fail-closed behavior, restart safety, and full Gate 1/2/3.1/3.2/3.3 regression.
 
-Do not authorize Gate 3.4 until Gate 3.3 is accepted.
+Do not authorize Gate 3.5 until Gate 3.4 is accepted.
