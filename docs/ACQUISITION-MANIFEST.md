@@ -235,6 +235,37 @@ a crash after it are indistinguishable from durable state alone, so releasing a
 attempt, retry, or provider-status semantics; the Job Engine remains the only
 owner of execution state.
 
+Two situations leave a reservation behind:
+
+```text
+StartDownload returned a reference, but the reference commit failed
+StartDownload returned an error, so no external effect could be confirmed
+```
+
+Both are treated identically, conservatively: a returned error does not prove the
+provider did not accept the request, so the Manifest stays fenced and every later
+execution fails closed. The provider is still invoked at most once.
+
+Recovery is an operator procedure, not an automatic retry:
+
+```text
+1. Inspect acquisition_provider_tasks for the Manifest: if a row is
+   REFERENCE_KNOWN, nothing is wrong and executions poll it normally.
+2. For a START_RESERVED row, determine from the provider whether a task
+   already exists for the Manifest's DownloadRequest.
+3. If a task exists, supply its opaque reference so the reservation
+   transitions to REFERENCE_KNOWN.
+4. If no task exists, the operator may delete the START_RESERVED row,
+   which re-authorizes exactly one future start attempt.
+```
+
+Step 4 is why reservations are not auto-cleared: deleting the row is a claim that
+no external effect happened, and only the provider side can establish that.
+
+The claim wait is bounded by `lock_timeout` (5s) on the fence lock. A claim that
+cannot hold the fence fails closed with `ErrProviderTaskContention` and grants no
+authorization, so a stuck lock can never hang a worker or permit a start.
+
 ## Deferred capabilities
 
 Source Resolver/provider syntax normalization, the Job worker loop, Manifest

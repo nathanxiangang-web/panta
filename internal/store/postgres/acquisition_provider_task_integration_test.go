@@ -370,3 +370,74 @@ func TestPostgresConcurrentProviderStartClaimAdmitsExactlyOneStart(t *testing.T)
 		t.Fatalf("durable task = %#v, want one START_RESERVED fence", stored)
 	}
 }
+
+// TestPostgresProviderTaskClaimLockIsBounded proves the fence wait is bounded: a
+// claim that cannot obtain the lock fails closed with the contention cause instead
+// of blocking a worker indefinitely.
+func TestPostgresProviderTaskClaimLockIsBounded(t *testing.T) {
+	ctx := context.Background()
+	pool := integrationPool(t, ctx)
+	resetTestSchema(t, ctx, pool)
+	migrator, err := NewMigrator(pool)
+	if err != nil {
+		t.Fatalf("NewMigrator() error = %v", err)
+	}
+	if _, err := migrator.Apply(ctx); err != nil {
+		t.Fatalf("Apply() error = %v", err)
+	}
+	bindingID := storage.BindingID("26000000-0000-4000-8000-000000000001")
+	seedStorageBinding(t, ctx, pool, bindingID, "provider-task-lock-root")
+	manifestID, jobID := seedAcquisitionProviderTaskManifest(t, ctx, pool, bindingID, "10", "20")
+
+	// Hold the per-Manifest fence lock in a separate session.
+	holder, err := pool.Begin(ctx)
+	if err != nil {
+		t.Fatalf("begin holder transaction: %v", err)
+	}
+	defer func() { _ = holder.Rollback(context.Background()) }()
+	if _, err := holder.Exec(ctx, `SELECT pg_advisory_xact_lock($1, hashtext($2))`,
+		3401, string(manifestID)); err != nil {
+		t.Fatalf("holder lock: %v", err)
+	}
+
+	// The claim must give up rather than wait forever.
+	claimCtx, cancel := context.WithTimeout(ctx, 12*time.Second)
+	defer cancel()
+	repository, err := NewAcquisitionProviderTaskRepository(pool)
+	if err != nil {
+		t.Fatalf("NewAcquisitionProviderTaskRepository() error = %v", err)
+	}
+	started := time.Now()
+	_, claimErr := repository.ClaimProviderTask(claimCtx, acquisition.ProviderTaskClaimRequest{
+		ManifestID: manifestID, JobID: jobID, ProviderID: "opaque-provider", Now: time.Now().UTC(),
+	})
+	elapsed := time.Since(started)
+	if claimErr == nil {
+		t.Fatal("ClaimProviderTask succeeded while the fence lock was held elsewhere")
+	}
+	if !errors.Is(claimErr, acquisition.ErrProviderTaskContention) {
+		t.Fatalf("ClaimProviderTask error = %v, want ErrProviderTaskContention", claimErr)
+	}
+	if elapsed > 9*time.Second {
+		t.Fatalf("claim waited %s, want it bounded near the 5s lock timeout", elapsed)
+	}
+
+	// No authorization was granted, so no durable row may exist.
+	if _, err := repository.GetProviderTask(ctx, manifestID); !errors.Is(err, acquisition.ErrProviderTaskNotFound) {
+		t.Fatalf("GetProviderTask() error = %v, want ErrProviderTaskNotFound after a bounded lock failure", err)
+	}
+
+	// Once the holder releases, the claim succeeds normally.
+	if err := holder.Rollback(ctx); err != nil {
+		t.Fatalf("release holder transaction: %v", err)
+	}
+	claim, err := repository.ClaimProviderTask(ctx, acquisition.ProviderTaskClaimRequest{
+		ManifestID: manifestID, JobID: jobID, ProviderID: "opaque-provider", Now: time.Now().UTC(),
+	})
+	if err != nil {
+		t.Fatalf("ClaimProviderTask() after release error = %v", err)
+	}
+	if !claim.ClaimedStart {
+		t.Fatalf("claim after release = %#v, want ClaimedStart", claim)
+	}
+}

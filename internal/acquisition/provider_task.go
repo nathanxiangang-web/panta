@@ -24,6 +24,10 @@ var (
 	ErrProviderTaskConflict       = errors.New("acquisition provider task conflicts with existing state")
 	ErrProviderTaskPersistence    = errors.New("acquisition provider task persistence failure")
 	ErrProviderTaskIdentityChange = errors.New("acquisition provider task identity change")
+	// ErrProviderTaskContention reports that the durable fence lock could not be
+	// held in time, so no authorization to start an external side effect was
+	// granted. Callers must treat it as fail-closed, not as permission.
+	ErrProviderTaskContention = errors.New("acquisition provider task fence contention")
 )
 
 // ProviderTaskState records side-effect certainty only. It never mirrors provider

@@ -22,6 +22,12 @@ manifest_id::text, job_id::text, provider_id, provider_task_ref, state, created_
 // to start an external provider task.
 const providerTaskFenceLockClass = 3401
 
+// providerTaskClaimLockTimeout bounds how long a claim waits for the per-Manifest
+// fence lock. Waiting is normal and brief under contention, but it must never be
+// unbounded: a claim that cannot obtain the fence fails closed instead of hanging
+// a worker forever.
+const providerTaskClaimLockTimeout = "5s"
+
 type acquisitionProviderTaskDB interface {
 	Begin(context.Context) (pgx.Tx, error)
 	QueryRow(context.Context, string, ...any) pgx.Row
@@ -79,9 +85,12 @@ func (repository *AcquisitionProviderTaskRepository) ClaimProviderTask(
 	}
 	defer func() { _ = tx.Rollback(context.Background()) }()
 
+	if _, err := tx.Exec(ctx, `SET LOCAL lock_timeout = '`+providerTaskClaimLockTimeout+`'`); err != nil {
+		return acquisition.ProviderTaskClaimResult{}, providerTaskPersistenceError("bound fence lock wait", err)
+	}
 	if _, err := tx.Exec(ctx, `SELECT pg_advisory_xact_lock($1, hashtext($2))`,
 		providerTaskFenceLockClass, string(request.ManifestID)); err != nil {
-		return acquisition.ProviderTaskClaimResult{}, providerTaskPersistenceError("lock provider task fence", err)
+		return acquisition.ProviderTaskClaimResult{}, providerTaskWriteError("lock provider task fence", err)
 	}
 
 	existing, err := scanAcquisitionProviderTask(tx.QueryRow(ctx, `SELECT `+acquisitionProviderTaskColumns+`
@@ -200,6 +209,10 @@ func providerTaskWriteError(operation string, err error) error {
 			return fmt.Errorf("%w: %s", acquisition.ErrInvalidProviderTask, postgresError.ConstraintName)
 		case "23514", "22P02":
 			return fmt.Errorf("%w: %s", acquisition.ErrInvalidProviderTask, postgresError.ConstraintName)
+		case "55P03", "40P01":
+			// The fence lock could not be held, so no side-effect authorization
+			// was granted. Callers must fail closed rather than start a task.
+			return fmt.Errorf("%w: %s", acquisition.ErrProviderTaskContention, postgresError.Message)
 		}
 	}
 	return providerTaskPersistenceError(operation, err)

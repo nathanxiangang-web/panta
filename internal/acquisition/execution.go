@@ -273,7 +273,8 @@ func (service *ExecutionStepService) claimAndStartProviderTask(
 		Now: service.now().UTC(),
 	})
 	if claimErr != nil {
-		return "", fmt.Errorf("%w: claim provider start for Manifest %s: %v", ErrProviderTaskPersistence, input.ManifestID, claimErr)
+		return "", fmt.Errorf("%w: claim provider start for Manifest %s: %w",
+			ErrProviderTaskPersistence, input.ManifestID, claimErr)
 	}
 	if claim.Task.ProviderID != input.ProviderID || claim.Task.JobID != request.JobID {
 		return "", fmt.Errorf("%w: claimed provider task for Manifest %s", ErrExecutionIdentityMismatch, input.ManifestID)
@@ -300,8 +301,10 @@ func (service *ExecutionStepService) claimAndStartProviderTask(
 	})
 	if commitErr != nil {
 		// The external task may exist while its reference is not durably known.
-		// The START_RESERVED row persists, so later executions fail closed.
-		return "", fmt.Errorf("%w: Manifest %s: %v", ErrExecutionSideEffectUncertain, input.ManifestID, commitErr)
+		// The START_RESERVED row persists, so later executions fail closed. The
+		// cause stays wrapped and readable so callers can still classify a lost
+		// fence race, while this error stays an uncertain side effect.
+		return "", fmt.Errorf("%w: Manifest %s: %w", ErrExecutionSideEffectUncertain, input.ManifestID, commitErr)
 	}
 	if !commit.CommittedReference || !commit.Task.ReferenceKnown() {
 		return "", fmt.Errorf("%w: Manifest %s did not durably commit a task reference",

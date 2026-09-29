@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"strings"
 	"sync"
 	"testing"
@@ -896,6 +897,56 @@ func TestExecutionStepProviderStartFailureIsAttributedAndNotPersisted(t *testing
 	stored := fixture.durableTask(t)
 	if stored.State != acquisition.ProviderTaskStartReserved {
 		t.Fatalf("durable state = %q, want START_RESERVED", stored.State)
+	}
+}
+
+// TestExecutionStepDefiniteStartFailureKeepsTheFence documents a deliberate
+// conservative consequence: because a failed StartDownload cannot be proven to
+// have had no external effect, the reservation stays and every later execution
+// fails closed. The provider is still called exactly once, and recovery is an
+// explicit operator decision rather than an automatic retry.
+func TestExecutionStepDefiniteStartFailureKeepsTheFence(t *testing.T) {
+	fixture := newExecutionFixture(t)
+	fixture.provider.startError = errors.New("provider transport exploded")
+
+	for attempt := 0; attempt < 3; attempt++ {
+		if _, err := fixture.service.Execute(context.Background(), fixture.request); err == nil {
+			t.Fatalf("attempt %d succeeded, want an attributed provider failure", attempt)
+		}
+		// The provider keeps failing, and the fence keeps the call count at one:
+		// a later execution is never authorized to start another task.
+		start, status, _ := fixture.provider.counts()
+		if start != 1 {
+			t.Fatalf("after attempt %d StartDownload calls = %d, want exactly 1", attempt, start)
+		}
+		if status != 0 {
+			t.Fatalf("after attempt %d DownloadStatus calls = %d, want 0", attempt, status)
+		}
+	}
+	stored := fixture.durableTask(t)
+	if stored.State != acquisition.ProviderTaskStartReserved || stored.ProviderTaskRef != "" {
+		t.Fatalf("durable task = %#v, want an uncommitted START_RESERVED fence", stored)
+	}
+}
+
+// TestExecutionStepFenceContentionFailsClosed proves that losing the durable claim
+// race is reported as a persistence failure and never authorizes a provider start.
+func TestExecutionStepFenceContentionFailsClosed(t *testing.T) {
+	fixture := newExecutionFixture(t)
+	fixture.tasks.failClaimStart = fmt.Errorf("%w: lock timeout", acquisition.ErrProviderTaskContention)
+
+	_, err := fixture.service.Execute(context.Background(), fixture.request)
+	if !errors.Is(err, acquisition.ErrProviderTaskPersistence) {
+		t.Fatalf("Execute() error = %v, want ErrProviderTaskPersistence", err)
+	}
+	if !errors.Is(err, acquisition.ErrProviderTaskContention) {
+		t.Fatalf("Execute() error = %v, want the underlying contention cause preserved", err)
+	}
+	if start, status, _ := fixture.provider.counts(); start != 0 || status != 0 {
+		t.Fatalf("provider calls start=%d status=%d, want 0/0", start, status)
+	}
+	if _, err := fixture.tasks.GetProviderTask(context.Background(), executionManifestID); !errors.Is(err, acquisition.ErrProviderTaskNotFound) {
+		t.Fatalf("durable task = %v, want not found after a lost claim race", err)
 	}
 }
 
