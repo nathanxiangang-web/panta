@@ -11,6 +11,11 @@ import (
 
 var ErrNotFound = errors.New("catalog entity not found")
 
+const (
+	CopyAvailabilityPresent = "PRESENT"
+	CopyAvailabilityRemoved = "REMOVED"
+)
+
 type AssetID string
 type ReleaseID string
 type VariantID string
@@ -74,15 +79,26 @@ type Copy struct {
 	UpdatedAt           time.Time
 }
 
+// HierarchyReader is the Panta-owned logical Catalog read boundary. Child
+// collections are deterministically ordered by implementations and distinguish
+// an empty collection from a missing parent, which callers resolve explicitly
+// through the corresponding Get method.
+type HierarchyReader interface {
+	GetAsset(context.Context, AssetID) (Asset, error)
+	GetRelease(context.Context, ReleaseID) (Release, error)
+	GetVariant(context.Context, VariantID) (Variant, error)
+	ListReleasesByAsset(context.Context, AssetID) ([]Release, error)
+	ListVariantsByRelease(context.Context, ReleaseID) ([]Variant, error)
+	ListCopiesByVariant(context.Context, VariantID) ([]Copy, error)
+}
+
 // Repository is the persistence port for the minimum logical resource model.
 // Implementations live outside the catalog package.
 type Repository interface {
+	HierarchyReader
 	CreateAsset(context.Context, Asset) error
-	GetAsset(context.Context, AssetID) (Asset, error)
 	CreateRelease(context.Context, Release) error
-	GetRelease(context.Context, ReleaseID) (Release, error)
 	CreateVariant(context.Context, Variant) error
-	GetVariant(context.Context, VariantID) (Variant, error)
 	CreateCopy(context.Context, Copy) error
 	GetCopy(context.Context, CopyID) (Copy, error)
 }

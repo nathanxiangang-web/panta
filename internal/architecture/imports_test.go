@@ -49,6 +49,13 @@ func TestGateZeroDomainImportBoundaries(t *testing.T) {
 				"/internal/integrations/openlist",
 			},
 		},
+		{
+			packagePath: "github.com/nathanxiangang-web/panta/internal/resourceview",
+			forbidden: []string{
+				"github.com/jackc/pgx", "database/sql", "/internal/integrations/",
+				"/internal/providers", "/providers/115", "/internal/search",
+			},
+		},
 	}
 
 	for _, test := range tests {
