@@ -117,10 +117,86 @@ Migration `0007_storage_binding_provider_scope.sql` leaves provider scope nullab
 for observation-only bindings, has no default, and rejects empty or overlong
 non-null values.
 
+## Durable provider-task linkage
+
+Gate 3.4 crosses the external side-effect boundary exactly once and records what
+it did. Migration `0008_acquisition_provider_tasks.sql` adds one provider-neutral
+table:
+
+```text
+acquisition_provider_tasks
+  manifest_id        uuid PRIMARY KEY  -> acquisition_manifests
+  job_id             uuid NOT NULL UNIQUE -> jobs
+  provider_id        text   (bounded opaque registry identity)
+  provider_task_ref  text   (bounded opaque provider reference)
+  created_at, updated_at
+```
+
+One Manifest maps to at most one provider task and one Job maps to at most one
+provider task. Both values are bounded opaque text: Panta never parses or
+normalizes them, and the table stores no provider status because the provider
+remains authoritative for its own task lifecycle. There are no database defaults
+and no provider-specific columns. A conflicting identity fails closed rather than
+overwriting a known task reference.
+
+## One bounded execution step
+
+`acquisition.ExecutionStepService` performs one bounded provider step for one
+fenced `RUNNING` `ACQUISITION` Job:
+
+```text
+fenced Job identity
+        |
+        v
+ACQUISITION Job payload + Manifest linkage validation
+        |
+        v
+Gate 3.3 ExecutionInput (ProviderID, CredentialRef, DownloadRequest)
+        |
+        v
+provider registry lookup + Downloader capability + descriptor identity
+        |
+        v
+durable provider task known?
+   no  -> StartDownload once, then persist the opaque reference
+   yes -> DownloadStatus for the exact stored reference
+```
+
+The step fails closed before any provider call when the Job is not an
+`ACQUISITION` Job, its payload does not match the Manifest, the Manifest is not
+linked to that Job, the Job is not `RUNNING`, the lease owner or attempt does not
+match the requesting lease, the lease has expired, the provider is not
+registered, the registry entry has no Downloader port, the descriptor identity
+differs from the resolved `ProviderID`, or the durable linkage contradicts the
+requested identity. Provider-specific errors stay attributed but are never
+converted into provider types inside the domain.
+
+Provider task states map only to step outcomes:
+
+```text
+PENDING / RUNNING -> PROVIDER_IN_PROGRESS
+SUCCEEDED         -> PROVIDER_SUCCEEDED
+FAILED            -> PROVIDER_FAILED
+CANCELED          -> PROVIDER_CANCELED
+```
+
+Provider success is not Manifest `READY`. `READY` still requires OpenList
+visibility, canonical confirmation, and Copy mutation, none of which Gate 3.4
+performs. An empty or invalid returned task reference and an unknown provider task
+state both fail closed.
+
+## Uncertain external side effects
+
+If `StartDownload` succeeds but persisting the returned reference fails, the step
+returns `ErrExecutionSideEffectUncertain` and never attempts a second
+`StartDownload` on that path. Because no durable reference exists, that outcome
+must be reconciled by an operator rather than treated as ordinary retry: a later
+execution that still has no durable reference is not authorized to assume the
+external side effect did not happen.
+
 ## Deferred capabilities
 
-Provider task references, Source Resolver/provider syntax normalization, Job
-worker execution, provider registry selection, DownloaderProvider calls, 115,
-OpenList visibility verification, Mutation
-Hint/scoped refresh, canonical READY orchestration, auth/quota, and API/UI are
-separately authorized later work.
+Source Resolver/provider syntax normalization, the Job worker loop, Manifest
+milestone transition to `AWAITING_VISIBILITY`, the 115 adapter, OpenList
+visibility verification, Mutation Hint/scoped refresh, canonical READY
+orchestration, auth/quota, and API/UI are separately authorized later work.

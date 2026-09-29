@@ -72,8 +72,7 @@ func TestGateZeroDomainImportBoundaries(t *testing.T) {
 		t.Run(test.packagePath, func(t *testing.T) {
 			listed := goList(t, test.packagePath)
 			for _, imported := range listed.Imports {
-				if listed.ImportPath == "github.com/nathanxiangang-web/panta/internal/acquisition" &&
-					imported == "github.com/nathanxiangang-web/panta/internal/providers/contracts" {
+				if isAllowedDomainDependency(listed.ImportPath, imported, test.forbidden) {
 					continue
 				}
 				for _, forbidden := range test.forbidden {
@@ -120,6 +119,40 @@ func TestTestUtilitiesAreAbsentFromRuntimeDependencyTree(t *testing.T) {
 			t.Fatalf("runtime dependency tree contains test utility %s", forbidden)
 		}
 	}
+}
+
+// allowedDomainDependencies lists the narrow, architect-authorized exceptions to
+// the blanket forbidden-substring rules. Each entry names one dependent package,
+// one exact imported package path, and the specific forbidden substring that the
+// exception relaxes. Anything else - including any other package under
+// internal/providers - still fails the guard.
+var allowedDomainDependencies = []struct {
+	dependent string
+	imported  string
+	relaxed   string
+}{
+	{
+		dependent: "github.com/nathanxiangang-web/panta/internal/acquisition",
+		imported:  "github.com/nathanxiangang-web/panta/internal/providers/contracts",
+		relaxed:   "/internal/providers",
+	},
+}
+
+// isAllowedDomainDependency reports whether this exact import is an authorized
+// exception. The import must still not match any other forbidden substring.
+func isAllowedDomainDependency(dependent, imported string, forbidden []string) bool {
+	for _, allowed := range allowedDomainDependencies {
+		if allowed.dependent != dependent || allowed.imported != imported {
+			continue
+		}
+		for _, candidate := range forbidden {
+			if candidate != allowed.relaxed && strings.Contains(imported, candidate) {
+				return false
+			}
+		}
+		return true
+	}
+	return false
 }
 
 func goList(t *testing.T, packagePath string) listedPackage {
