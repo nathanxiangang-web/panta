@@ -6,7 +6,7 @@
 
 **MVP implementation — Gate 3**
 
-Gate 0, Gate 1, and Gate 2 are formally accepted and closed. Gate 3.1 is accepted and merged. Gate 3.2 is authorized and in progress.
+Gate 0, Gate 1, and Gate 2 are formally accepted and closed. Gate 3.1 and Gate 3.2 are accepted and merged. Gate 3.3 is authorized and in progress.
 
 ## Accepted baseline
 
@@ -440,9 +440,22 @@ Explicitly deferred:
 
 ### Gate 3.2 — Atomic Manifest activation and durable Acquisition Job linkage
 
-Status: **AUTHORIZED / IN PROGRESS**
+Status: **ACCEPTED**
 
-Tracking: GitHub Issue #25
+Tracking: GitHub Issue #25 / PR #26
+
+Merged:
+- squash commit `aaa1b0f90dfc6bf4c616ad396321dbf1694a7aab`
+
+Acceptance evidence:
+- Round 2 closed the pre-linked PENDING Manifest bypass;
+- CreateManifest always produces PENDING + job_id NULL;
+- append-only migration 0006 enforces PENDING/ACTIVE Job-link invariants;
+- atomic activation creates exactly one QUEUED ACQUISITION Job and ACTIVE linkage;
+- replay/concurrency converge to one durable Job;
+- forced post-Job-insert failure rolls back both records;
+- GitHub Actions run `36555568078` fully green;
+- migration history compatible at version 6.
 
 Scope:
 - one atomic PostgreSQL activation transaction;
@@ -462,6 +475,36 @@ Explicitly deferred:
 - OpenList visibility verification;
 - Mutation Hint / scoped refresh;
 - canonical confirmation and later Manifest transitions;
+- auth/quota/API/UI.
+
+## Current bounded task
+
+### Gate 3.3 — Provider target mapping and side-effect-free acquisition execution input
+
+Status: **AUTHORIZED / IN PROGRESS**
+
+Tracking: GitHub Issue #27
+
+Scope:
+- append-only nullable StorageBinding.provider_scope;
+- preserve observation-only bindings without provider scope;
+- acquisition targets require explicit provider scope;
+- active StorageBinding + active StorageConnection validation;
+- StorageConnection.provider_type is the future ProviderID;
+- side-effect-free ACTIVE Manifest → provider-neutral DownloadRequest resolution;
+- source_ref remains opaque and unchanged;
+- no provider registry lookup or provider call.
+
+Explicitly deferred:
+- provider registry selection;
+- DownloaderProvider execution;
+- provider task persistence;
+- real 115 adapter;
+- Source Resolver / magnet normalization;
+- Job worker loop;
+- OpenList visibility verifier;
+- Mutation Hint / scoped refresh;
+- canonical confirmation / READY;
 - auth/quota/API/UI.
 
 ## Planned Gate 0 task sequence
@@ -506,6 +549,6 @@ Until the relevant gate is accepted, do not implement:
 
 ## Next architect action
 
-Review the Gate 3.2 PR for Issue #25 against atomic Manifest+Job activation, no-orphan invariants, minimal Job payload, replay/concurrency/rollback safety, reuse of the accepted Job Engine semantics, and full Gate 1/2/3.1 regression.
+Review the Gate 3.3 PR for Issue #27 against explicit provider-scope mapping, observation/acquisition separation, active connection/binding validation, exact provider-neutral execution input assembly, absence of side effects, and full Gate 1/2/3.1/3.2 regression.
 
-Do not authorize Gate 3.3 until Gate 3.2 is accepted.
+Do not authorize Gate 3.4 until Gate 3.3 is accepted.
