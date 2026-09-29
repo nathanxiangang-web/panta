@@ -15,6 +15,7 @@ import (
 type catalogDB interface {
 	Exec(context.Context, string, ...any) (pgconn.CommandTag, error)
 	QueryRow(context.Context, string, ...any) pgx.Row
+	Query(context.Context, string, ...any) (pgx.Rows, error)
 }
 
 type CatalogRepository struct {
@@ -91,6 +92,46 @@ FROM releases WHERE release_id = $1`, string(id)).Scan(
 	return release, nil
 }
 
+// ListReleasesByAsset returns only direct children of assetID. Ordering is
+// stable across calls: creation time first, then immutable ID as a tie-breaker.
+func (repository *CatalogRepository) ListReleasesByAsset(ctx context.Context, assetID catalog.AssetID) ([]catalog.Release, error) {
+	rows, err := repository.db.Query(ctx, `
+SELECT release_id::text, asset_id::text, version_raw, version_normalized,
+       version_scheme, channel, release_date, source_ref, status, created_at, updated_at
+FROM releases
+WHERE asset_id = $1
+ORDER BY created_at, release_id`, string(assetID))
+	if err != nil {
+		return nil, fmt.Errorf("list releases for asset %s: %w", assetID, err)
+	}
+	defer rows.Close()
+
+	releases := make([]catalog.Release, 0)
+	for rows.Next() {
+		var release catalog.Release
+		var releaseID, storedAssetID string
+		var releaseDate sql.NullTime
+		if err := rows.Scan(
+			&releaseID, &storedAssetID, &release.VersionRaw, &release.VersionNormalized,
+			&release.VersionScheme, &release.Channel, &releaseDate, &release.SourceRef,
+			&release.Status, &release.CreatedAt, &release.UpdatedAt,
+		); err != nil {
+			return nil, fmt.Errorf("scan release for asset %s: %w", assetID, err)
+		}
+		release.ID = catalog.ReleaseID(releaseID)
+		release.AssetID = catalog.AssetID(storedAssetID)
+		if releaseDate.Valid {
+			value := releaseDate.Time
+			release.ReleaseDate = &value
+		}
+		releases = append(releases, release)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("iterate releases for asset %s: %w", assetID, err)
+	}
+	return releases, nil
+}
+
 func (repository *CatalogRepository) CreateVariant(ctx context.Context, variant catalog.Variant) error {
 	_, err := repository.db.Exec(ctx, `
 INSERT INTO variants (variant_id, release_id, variant_key, attributes, status, created_at, updated_at)
@@ -118,6 +159,41 @@ FROM variants WHERE variant_id = $1`, string(id)).Scan(
 	variant.ReleaseID = catalog.ReleaseID(releaseID)
 	variant.Attributes = attributes
 	return variant, nil
+}
+
+// ListVariantsByRelease returns direct children ordered by their stable product
+// key and immutable ID. It never combines variants from another Release.
+func (repository *CatalogRepository) ListVariantsByRelease(ctx context.Context, releaseID catalog.ReleaseID) ([]catalog.Variant, error) {
+	rows, err := repository.db.Query(ctx, `
+SELECT variant_id::text, release_id::text, variant_key, attributes, status, created_at, updated_at
+FROM variants
+WHERE release_id = $1
+ORDER BY variant_key, variant_id`, string(releaseID))
+	if err != nil {
+		return nil, fmt.Errorf("list variants for release %s: %w", releaseID, err)
+	}
+	defer rows.Close()
+
+	variants := make([]catalog.Variant, 0)
+	for rows.Next() {
+		var variant catalog.Variant
+		var variantID, storedReleaseID string
+		var attributes []byte
+		if err := rows.Scan(
+			&variantID, &storedReleaseID, &variant.VariantKey, &attributes,
+			&variant.Status, &variant.CreatedAt, &variant.UpdatedAt,
+		); err != nil {
+			return nil, fmt.Errorf("scan variant for release %s: %w", releaseID, err)
+		}
+		variant.ID = catalog.VariantID(variantID)
+		variant.ReleaseID = catalog.ReleaseID(storedReleaseID)
+		variant.Attributes = attributes
+		variants = append(variants, variant)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("iterate variants for release %s: %w", releaseID, err)
+	}
+	return variants, nil
 }
 
 func (repository *CatalogRepository) CreateCopy(ctx context.Context, resourceCopy catalog.Copy) error {
@@ -159,6 +235,42 @@ FROM copies WHERE copy_id = $1`, string(id)).Scan(
 		resourceCopy.VariantID = &value
 	}
 	return resourceCopy, nil
+}
+
+// ListCopiesByVariant returns classified Copies only. Unresolved physical
+// Copies have variant_id NULL and remain outside this logical hierarchy.
+func (repository *CatalogRepository) ListCopiesByVariant(ctx context.Context, variantID catalog.VariantID) ([]catalog.Copy, error) {
+	rows, err := repository.db.Query(ctx, `
+SELECT copy_id::text, variant_id::text, indexcore_root_id, indexcore_resource_id,
+       storage_binding_id::text, availability, created_at, updated_at
+FROM copies
+WHERE variant_id = $1
+ORDER BY created_at, copy_id`, string(variantID))
+	if err != nil {
+		return nil, fmt.Errorf("list copies for variant %s: %w", variantID, err)
+	}
+	defer rows.Close()
+
+	copies := make([]catalog.Copy, 0)
+	for rows.Next() {
+		var resourceCopy catalog.Copy
+		var copyID, storedVariantID, storageBindingID string
+		if err := rows.Scan(
+			&copyID, &storedVariantID, &resourceCopy.IndexCoreRootID, &resourceCopy.IndexCoreResourceID,
+			&storageBindingID, &resourceCopy.Availability, &resourceCopy.CreatedAt, &resourceCopy.UpdatedAt,
+		); err != nil {
+			return nil, fmt.Errorf("scan copy for variant %s: %w", variantID, err)
+		}
+		resourceCopy.ID = catalog.CopyID(copyID)
+		storedVariant := catalog.VariantID(storedVariantID)
+		resourceCopy.VariantID = &storedVariant
+		resourceCopy.StorageBindingID = catalog.StorageBindingID(storageBindingID)
+		copies = append(copies, resourceCopy)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("iterate copies for variant %s: %w", variantID, err)
+	}
+	return copies, nil
 }
 
 func wrapReadError(entity, id string, err error) error {
