@@ -43,6 +43,8 @@ Panta v0.1 must prove five things:
 - [Project Context](PROJECT-CONTEXT.md)
 - [Project State](PROJECT-STATE.md)
 - [Development & Acceptance Rules](docs/DEVELOPMENT-RULES.md)
+- [Catalog logical read model](docs/CATALOG-READ-MODEL.md)
+- [Physical resource view](docs/PHYSICAL-RESOURCE-VIEW.md)
 
 ## Collaboration model
 

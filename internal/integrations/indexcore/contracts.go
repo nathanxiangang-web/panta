@@ -91,9 +91,14 @@ type ResourceContext struct {
 	LastConfirmedGeneration int64
 }
 
+// ResolvePort is the narrow Q5 read boundary for canonical path resolution.
+type ResolvePort interface {
+	Resolve(context.Context, ResolveRequest) (ResolveResult, error)
+}
+
 // ReadPort resolves canonical paths and browses hierarchy children.
 type ReadPort interface {
-	Resolve(context.Context, ResolveRequest) (ResolveResult, error)
+	ResolvePort
 	Browse(context.Context, BrowseRequest) (ResourcePage, error)
 }
 

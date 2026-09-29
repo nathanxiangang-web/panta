@@ -237,6 +237,32 @@ FROM copies WHERE copy_id = $1`, string(id)).Scan(
 	return resourceCopy, nil
 }
 
+// GetCopyByPhysicalIdentity performs an exact lookup by the canonical identity
+// supplied by IndexCore. It never falls back to path, name, or partial matching.
+func (repository *CatalogRepository) GetCopyByPhysicalIdentity(ctx context.Context, rootID, resourceID string) (catalog.Copy, error) {
+	var resourceCopy catalog.Copy
+	var copyID, storageBindingID string
+	var variantID sql.NullString
+	err := repository.db.QueryRow(ctx, `
+SELECT copy_id::text, variant_id::text, indexcore_root_id, indexcore_resource_id,
+       storage_binding_id::text, availability, created_at, updated_at
+FROM copies
+WHERE indexcore_root_id = $1 AND indexcore_resource_id = $2`, rootID, resourceID).Scan(
+		&copyID, &variantID, &resourceCopy.IndexCoreRootID, &resourceCopy.IndexCoreResourceID,
+		&storageBindingID, &resourceCopy.Availability, &resourceCopy.CreatedAt, &resourceCopy.UpdatedAt,
+	)
+	if err != nil {
+		return catalog.Copy{}, wrapReadError("copy physical identity", rootID+"/"+resourceID, err)
+	}
+	resourceCopy.ID = catalog.CopyID(copyID)
+	resourceCopy.StorageBindingID = catalog.StorageBindingID(storageBindingID)
+	if variantID.Valid {
+		value := catalog.VariantID(variantID.String)
+		resourceCopy.VariantID = &value
+	}
+	return resourceCopy, nil
+}
+
 // ListCopiesByVariant returns classified Copies only. Unresolved physical
 // Copies have variant_id NULL and remain outside this logical hierarchy.
 func (repository *CatalogRepository) ListCopiesByVariant(ctx context.Context, variantID catalog.VariantID) ([]catalog.Copy, error) {
