@@ -253,3 +253,34 @@ Panta's existing OpenList VisibilityPort / AccessPort remains a later control/ac
 Gate 1 closeout uses a controlled OpenList-compatible fixture and a real, externally executed IndexCore binary pinned to an accepted version. Panta never imports IndexCore internals to obtain this evidence.
 
 OpenList absence is not physical deletion. The accepted IndexCore OpenList collector is additive-safe unless stronger completeness evidence exists.
+
+
+## D-019 — Copy classification is an explicit monotonic binding by default
+
+**Status:** Accepted
+
+Panta classification attaches an existing unresolved Copy to an existing Variant.
+
+The default transition is monotonic:
+
+```text
+variant_id = NULL
+        ↓
+explicit binding command
+        ↓
+variant_id = target Variant
+```
+
+Rules:
+- a missing Copy is not created by classification;
+- a missing Variant is not created by classification;
+- repeating the same Copy → Variant binding is idempotent;
+- attempting to bind an already-classified Copy to a different Variant fails closed;
+- silent reclassification is forbidden;
+- CopyID, IndexCore physical identity, StorageBindingID, and physical availability are preserved.
+
+Concurrency must be fenced by the persistence boundary so two different target Variants cannot both win.
+
+The Catalog binding operation owns VariantID. The observation projector owns physical availability. Projector replay must preserve existing classification.
+
+Any future correction/reclassification capability requires a separately authorized operation rather than weakening this default rule.
