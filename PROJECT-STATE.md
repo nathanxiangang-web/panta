@@ -4,9 +4,9 @@
 
 ## Current phase
 
-**MVP implementation — Gate 2**
+**MVP implementation — Gate 3**
 
-Gate 0 and Gate 1 are formally accepted and closed. Gate 2.1 and Gate 2.2 are accepted and merged. Gate 2.3 is authorized and in progress.
+Gate 0, Gate 1, and Gate 2 are formally accepted and closed. Gate 3.1 is authorized and in progress.
 
 ## Accepted baseline
 
@@ -350,9 +350,19 @@ Explicitly deferred:
 
 ### Gate 2.3 — Explicit unresolved Copy → Variant binding with concurrency-safe monotonic semantics
 
-Status: **AUTHORIZED / IN PROGRESS**
+Status: **ACCEPTED**
 
-Tracking: GitHub Issue #21
+Tracking: GitHub Issue #21 / PR #22
+
+Merged:
+- squash commit `2aa7469f4f40fe274e715541d8b36961b917b068`
+
+Acceptance evidence:
+- GitHub Actions run `36545963720` fully green;
+- real PostgreSQL row-lock serialization proves one winner for different-target competition;
+- same-target concurrent replay is idempotent;
+- CopyID / physical identity / StorageBinding / availability / created_at are preserved;
+- ProjectionStore availability updates preserve classification.
 
 Scope:
 - bind an existing unresolved Copy to an existing Variant;
@@ -371,6 +381,49 @@ Explicitly deferred:
 - public API/UI;
 - acquisition / 115 / Mutation Hint;
 - auth/quota/share.
+
+## Gate 2 closeout
+
+Status: **ACCEPTED / CLOSED**
+
+Gate 2 acceptance is satisfied without a synthetic Gate 2.4:
+- one Asset can have multiple Releases;
+- one Release can have multiple Variants;
+- one Variant can have multiple Copies;
+- logical hierarchy reads are deterministic and ownership-safe;
+- known-path physical resources remain usable without classification;
+- Q5 ambiguity is preserved;
+- unresolved Copy classification is explicit, monotonic, idempotent and concurrency-safe;
+- Search remains optional and is not required for direct-path or Catalog identity flows.
+
+## Current bounded task
+
+### Gate 3.1 — Durable Acquisition Manifest and validated target intent
+
+Status: **AUTHORIZED / IN PROGRESS**
+
+Tracking: GitHub Issue #23
+
+Scope:
+- append-only Acquisition Manifest persistence;
+- provider-neutral source intent;
+- validated active StorageBinding target;
+- normalized target path;
+- optional existing Asset / Release / Variant association;
+- nullable future user linkage and Job linkage;
+- creation starts at PENDING only;
+- no provider execution.
+
+Explicitly deferred:
+- real 115 adapter;
+- DownloaderProvider execution;
+- Source Resolver / magnet parsing;
+- durable Job submission / worker loop;
+- provider task references;
+- OpenList visibility verifier;
+- Mutation Hint / scoped refresh;
+- canonical READY orchestration;
+- auth enforcement / usage / API/UI.
 
 ## Planned Gate 0 task sequence
 
@@ -392,8 +445,8 @@ The sequence may be refined by an architect decision, but later tasks must not b
 
 - Gate 0 — Skeleton & contracts — **ACCEPTED**
 - Gate 1 — Observation plane: OpenList → IndexCore → Catalog — **ACCEPTED / CLOSED**
-- Gate 2 — Resource semantics & direct-path/catalog read flows — **IN PROGRESS**
-- Gate 3 — 115 acquisition + fast IndexCore synchronization
+- Gate 2 — Resource semantics & direct-path/catalog read flows — **ACCEPTED / CLOSED**
+- Gate 3 — 115 acquisition + fast IndexCore synchronization — **IN PROGRESS**
 - Gate 4 — Login + share/access + usage accounting
 - Gate 5 — Constrained CodeArts agent integration
 - Gate 6 — Provider-replacement proof + MVP closeout
@@ -414,6 +467,6 @@ Until the relevant gate is accepted, do not implement:
 
 ## Next architect action
 
-Review the Gate 2.3 PR for Issue #21 against monotonic Copy classification, same-target idempotency, different-target fail-closed semantics, real PostgreSQL concurrency fencing, projector compatibility, and full Gate 1/2.1/2.2 regression.
+Review the Gate 3.1 PR for Issue #23 against durable provider-neutral acquisition intent, target and logical-lineage validation, PENDING-only creation, migration safety, absence of external side effects, and full Gate 1/2 regression.
 
-Do not authorize Gate 2.4 until Gate 2.3 is accepted.
+Do not authorize Gate 3.2 until Gate 3.1 is accepted.
