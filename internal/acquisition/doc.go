@@ -1,3 +1,3 @@
-// Package acquisition will coordinate acquisition use cases through provider
-// contracts and jobs. It contains no provider-specific behavior.
+// Package acquisition owns provider-neutral acquisition intent. Provider
+// execution and Job lease/retry behavior remain outside this package.
 package acquisition
