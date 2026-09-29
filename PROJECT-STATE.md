@@ -6,7 +6,7 @@
 
 **MVP implementation — Gate 3**
 
-Gate 0, Gate 1, and Gate 2 are formally accepted and closed. Gate 3.1 through Gate 3.4 are accepted and merged. Gate 3.5 is authorized and in progress.
+Gate 0, Gate 1, and Gate 2 are formally accepted and closed. Gate 3.1 through Gate 3.5 are accepted and merged. Gate 3.6 is authorized and in progress.
 
 ## Accepted baseline
 
@@ -567,9 +567,23 @@ Explicitly deferred:
 
 ### Gate 3.5 — Connection-scoped downloader session and credential boundary
 
-Status: **AUTHORIZED / IN PROGRESS**
+Status: **ACCEPTED**
 
-Tracking: GitHub Issue #31
+Tracking: GitHub Issue #31 / PR #32
+
+Merged:
+- squash commit `54a5df99fa5d81df4661d0b8c56888fbe03cac6e`
+
+Acceptance evidence:
+- provider execution resolves by ProviderID + ConnectionID + opaque CredentialRef;
+- the same ProviderID can back multiple StorageConnections with distinct downloader sessions;
+- connection/credential mismatch fails closed before provider calls;
+- contracts.SecretResolver freezes the opaque secret lookup boundary;
+- secret contents remain outside Manifest, Job payload, and provider-task persistence;
+- provider adapters do not query Panta persistence for credentials;
+- all Gate 3.4 side-effect fencing remains intact;
+- GitHub Actions run `36608071506` fully green;
+- no migration change; schema remains version 9.
 
 Scope:
 - distinguish ProviderID from StorageConnection session identity;
@@ -589,6 +603,36 @@ Explicitly deferred:
 - OpenList visibility verifier;
 - Mutation Hint / scoped refresh;
 - canonical confirmation / READY;
+- auth/quota/API/UI.
+
+## Current bounded task
+
+### Gate 3.6 — Concrete 115 Downloader adapter on pinned 115driver
+
+Status: **AUTHORIZED / IN PROGRESS**
+
+Tracking: GitHub Issue #33
+
+Scope:
+- add isolated concrete `internal/providers/115` DownloaderProvider;
+- pin `github.com/SheltonZhu/115driver v1.3.5`;
+- cookie secret bytes -> 115driver credential/client construction without network login check;
+- StartDownload maps exact URI + Target.Scope saveDirID to one 115 offline task;
+- TaskReference is exact 115 info_hash;
+- DownloadStatus performs bounded info_hash lookup and maps 115 status 0/1/2/-1;
+- CancelDownload removes task only with deleteFiles=false;
+- preserve exact source bytes; no source normalization/truncation;
+- adapter remains isolated from acquisition/jobs/store/OpenList/IndexCore/session implementation.
+
+Explicitly deferred:
+- Source Resolver normalization / magnet rewriting;
+- worker loop;
+- AWAITING_VISIBILITY transition;
+- OpenList visibility verifier;
+- Mutation Hint / scoped refresh;
+- canonical confirmation / READY;
+- live 115 credentials as a CI requirement;
+- 115 ShareProvider;
 - auth/quota/API/UI.
 
 ## Planned Gate 0 task sequence
@@ -633,6 +677,6 @@ Until the relevant gate is accepted, do not implement:
 
 ## Next architect action
 
-Review the Gate 3.5 PR for Issue #31 against connection-scoped downloader resolution, exact ProviderID/ConnectionID/CredentialRef matching, secret non-persistence, multiple-connection behavior, and full Gate 1/2/3.1-3.4 regression.
+Review the Gate 3.6 PR for Issue #33 against the pinned 115driver mapping, secret-safe client construction, exact URI/saveDirID/info_hash semantics, bounded status pagination, non-destructive cancellation, concrete-provider isolation, and full Gate 1/2/3.1-3.5 regression.
 
-Do not authorize Gate 3.6 until Gate 3.5 is accepted.
+Do not authorize Gate 3.7 until Gate 3.6 is accepted.
