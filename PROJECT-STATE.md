@@ -6,7 +6,7 @@
 
 **MVP implementation — Gate 3**
 
-Gate 0, Gate 1, and Gate 2 are formally accepted and closed. Gate 3.1 is authorized and in progress.
+Gate 0, Gate 1, and Gate 2 are formally accepted and closed. Gate 3.1 is accepted and merged. Gate 3.2 is authorized and in progress.
 
 ## Accepted baseline
 
@@ -400,9 +400,20 @@ Gate 2 acceptance is satisfied without a synthetic Gate 2.4:
 
 ### Gate 3.1 — Durable Acquisition Manifest and validated target intent
 
-Status: **AUTHORIZED / IN PROGRESS**
+Status: **ACCEPTED**
 
-Tracking: GitHub Issue #23
+Tracking: GitHub Issue #23 / PR #24
+
+Merged:
+- squash commit `6637b695386ecd9976921242ff60c8983b0e6dad`
+
+Acceptance evidence:
+- GitHub Actions run `36549876927` fully green;
+- migration history compatible at version 5;
+- real PostgreSQL Manifest round-trip and FK/constraint evidence passed;
+- source intent remains opaque and provider-neutral;
+- active StorageBinding and optional logical lineage are validated;
+- no provider/OpenList/IndexCore/Job execution side effect was introduced.
 
 Scope:
 - append-only Acquisition Manifest persistence;
@@ -424,6 +435,34 @@ Explicitly deferred:
 - Mutation Hint / scoped refresh;
 - canonical READY orchestration;
 - auth enforcement / usage / API/UI.
+
+## Current bounded task
+
+### Gate 3.2 — Atomic Manifest activation and durable Acquisition Job linkage
+
+Status: **AUTHORIZED / IN PROGRESS**
+
+Tracking: GitHub Issue #25
+
+Scope:
+- one atomic PostgreSQL activation transaction;
+- PENDING Manifest → ACTIVE;
+- create/link exactly one generic QUEUED ACQUISITION Job;
+- minimal versioned Job payload references manifest_id only;
+- deterministic Manifest-scoped Job idempotency;
+- replay returns existing durable linkage;
+- concurrent activation cannot create orphan/duplicate Jobs;
+- forced transaction failure rolls back both Manifest activation and Job creation.
+
+Explicitly deferred:
+- Job worker/provider execution;
+- 115 adapter / DownloaderProvider calls;
+- provider task references;
+- Source Resolver / magnet parsing;
+- OpenList visibility verification;
+- Mutation Hint / scoped refresh;
+- canonical confirmation and later Manifest transitions;
+- auth/quota/API/UI.
 
 ## Planned Gate 0 task sequence
 
@@ -467,6 +506,6 @@ Until the relevant gate is accepted, do not implement:
 
 ## Next architect action
 
-Review the Gate 3.1 PR for Issue #23 against durable provider-neutral acquisition intent, target and logical-lineage validation, PENDING-only creation, migration safety, absence of external side effects, and full Gate 1/2 regression.
+Review the Gate 3.2 PR for Issue #25 against atomic Manifest+Job activation, no-orphan invariants, minimal Job payload, replay/concurrency/rollback safety, reuse of the accepted Job Engine semantics, and full Gate 1/2/3.1 regression.
 
-Do not authorize Gate 3.2 until Gate 3.1 is accepted.
+Do not authorize Gate 3.3 until Gate 3.2 is accepted.
