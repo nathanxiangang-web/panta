@@ -1,0 +1,121 @@
+name: Panta CI
+
+on:
+  pull_request:
+  push:
+    branches:
+      - main
+
+permissions:
+  contents: read
+
+jobs:
+  quality:
+    name: Unit, architecture, race, vet, and build
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v7
+      - name: Set up Go 1.27.1
+        uses: actions/setup-go@v7
+        with:
+          go-version: 1.27.1
+          cache-dependency-path: go.sum
+      - name: Unit and contract tests
+        run: go test ./... -count=1
+      - name: Race tests
+        run: go test -race ./... -count=1
+      - name: Architecture import guard
+        run: go test ./internal/architecture -count=1
+      - name: Vet
+        run: go vet ./...
+      - name: Build commands
+        run: go build ./cmd/panta ./cmd/panta-db
+
+  postgres-integration:
+    name: PostgreSQL 16 integration and migrations
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:16-alpine
+        env:
+          POSTGRES_USER: panta
+          POSTGRES_PASSWORD: panta_test
+          POSTGRES_DB: panta_test
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U panta -d panta_test"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+    env:
+      PANTA_TEST_DATABASE_URL: postgres://panta:panta_test@127.0.0.1:5432/panta_test?sslmode=disable
+      PANTA_DATABASE_URL: postgres://panta:panta_test@127.0.0.1:5432/panta_test?sslmode=disable
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v7
+      - name: Set up Go 1.27.1
+        uses: actions/setup-go@v7
+        with:
+          go-version: 1.27.1
+          cache-dependency-path: go.sum
+      - name: PostgreSQL integration tests
+        run: go test ./internal/store/postgres -run 'Test(Postgres|GateZero)' -count=1 -v
+      - name: Apply migrations
+        run: go run ./cmd/panta-db migrate
+      - name: Validate migration status
+        run: go run ./cmd/panta-db status
+
+  controlled-observation:
+    name: PostgreSQL 18 controlled OpenList observation
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:18-alpine
+        env:
+          POSTGRES_USER: panta
+          POSTGRES_PASSWORD: panta_e2e
+          POSTGRES_DB: indexcore_e2e
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U panta -d indexcore_e2e"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+    env:
+      PANTA_GATE1_E2E: "1"
+      PANTA_GATE1_INDEXCORE_BINARY: ${{ runner.temp }}/indexcore
+      PANTA_GATE1_INDEXCORE_DATABASE_URL: postgres://panta:panta_e2e@127.0.0.1:5432/indexcore_e2e?sslmode=disable
+      PANTA_GATE1_PANTA_DATABASE_URL: postgres://panta:panta_e2e@127.0.0.1:5432/panta_e2e?sslmode=disable
+    steps:
+      - name: Check out Panta
+        uses: actions/checkout@v7
+      - name: Check out pinned IndexCore
+        uses: actions/checkout@v7
+        with:
+          repository: nathanxiangang-web/index-core
+          ref: 6f0eec85c59bd8cbe55011b0d9e512e0cafd6615
+          path: .gate1-indexcore
+      - name: Verify IndexCore pin
+        shell: bash
+        run: test "$(git -C .gate1-indexcore rev-parse HEAD)" = "6f0eec85c59bd8cbe55011b0d9e512e0cafd6615"
+      - name: Set up Go 1.27.1
+        uses: actions/setup-go@v7
+        with:
+          go-version: 1.27.1
+          cache-dependency-path: |
+            go.sum
+            .gate1-indexcore/go.sum
+      - name: Create separate Panta database
+        shell: bash
+        run: >-
+          docker exec "${{ job.services.postgres.id }}"
+          psql -U panta -d indexcore_e2e -v ON_ERROR_STOP=1
+          -c "CREATE DATABASE panta_e2e"
+      - name: Build pinned external IndexCore
+        working-directory: .gate1-indexcore
+        run: go build -o "$PANTA_GATE1_INDEXCORE_BINARY" ./cmd/indexcore
+      - name: Run controlled observation E2E
+        run: go test ./test/e2e/observation -run TestControlledObservation -count=1 -v

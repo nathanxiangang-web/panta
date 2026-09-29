@@ -83,7 +83,7 @@ func TestGateZeroCoreDoesNotImportConcrete115Provider(t *testing.T) {
 }
 
 func TestTestUtilitiesAreAbsentFromRuntimeDependencyTree(t *testing.T) {
-	command := exec.Command("go", "list", "-deps", "-f", "{{.ImportPath}}", "github.com/nathanxiangang-web/panta/cmd/panta")
+	command := exec.Command("go", "list", "-deps", "-f", "{{.ImportPath}}", "github.com/nathanxiangang-web/panta/cmd/...")
 	output, err := command.Output()
 	if err != nil {
 		t.Fatalf("go list runtime dependencies: %v", err)
@@ -92,6 +92,8 @@ func TestTestUtilitiesAreAbsentFromRuntimeDependencyTree(t *testing.T) {
 	for _, forbidden := range []string{
 		"github.com/nathanxiangang-web/panta/internal/providers/testprovider",
 		"github.com/nathanxiangang-web/panta/internal/providers/contracttest",
+		"github.com/nathanxiangang-web/panta/test/e2e",
+		"github.com/nathanxiangang-web/index-core",
 	} {
 		if strings.Contains(dependencies, forbidden+"\n") {
 			t.Fatalf("runtime dependency tree contains test utility %s", forbidden)
