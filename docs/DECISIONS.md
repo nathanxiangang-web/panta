@@ -335,3 +335,29 @@ Activation replay is idempotent by Manifest identity. Once a Manifest is ACTIVE 
 The acquisition application layer may depend on Panta's provider-neutral Jobs domain for this orchestration. It must not duplicate Job lease/retry/recovery semantics.
 
 Provider execution remains forbidden in Gate 3.2. Later workers may act only after this activation commit is durable.
+
+
+## D-022 — StorageBinding maps provider scope, OpenList mount, and IndexCore root independently
+
+**Status:** Accepted
+
+A Panta StorageBinding connects three coordinate systems:
+
+```text
+provider target scope
+OpenList mount path
+IndexCore root_id
+```
+
+These values are related by explicit product configuration and must never be derived from one another.
+
+Rules:
+- OpenList mount paths retain their own normalized path semantics.
+- IndexCore root IDs remain canonical physical-index identifiers.
+- Provider target scope is opaque adapter-owned text and is stored separately.
+- Observation-only bindings may omit provider scope.
+- Acquisition requires an explicit provider scope.
+- Provider adapters must not query Panta persistence to discover this mapping.
+- StorageConnection.provider_type is the provider registry identity used for later adapter selection.
+
+This separation prevents provider execution from depending on accidental equivalence between provider paths, OpenList mounts, and IndexCore roots.
