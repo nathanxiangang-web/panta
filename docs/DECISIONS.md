@@ -361,3 +361,21 @@ Rules:
 - StorageConnection.provider_type is the provider registry identity used for later adapter selection.
 
 This separation prevents provider execution from depending on accidental equivalence between provider paths, OpenList mounts, and IndexCore roots.
+
+
+## D-023 — Provider side effects require durable task linkage; uncertain starts fail closed
+
+**Status:** Accepted
+
+Panta crosses the external downloader boundary through a durable, provider-neutral provider-task linkage.
+
+Rules:
+- one MVP acquisition Manifest maps to at most one provider task;
+- if a durable provider task reference exists, replay polls that task and never calls StartDownload again;
+- provider task references remain opaque and are not parsed by the acquisition domain;
+- provider task status does not replace Panta Job state or Acquisition Manifest milestone state;
+- provider-reported success is not Panta READY;
+- if StartDownload succeeds but the returned provider task reference cannot be durably recorded, Panta treats the result as an uncertain external side effect;
+- uncertain external side effects must fail closed and must not be converted into blind automatic recreation.
+
+This boundary exists so crash/restart behavior cannot accidentally duplicate provider-side downloads.
