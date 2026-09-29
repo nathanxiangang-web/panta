@@ -92,10 +92,18 @@ type HierarchyReader interface {
 	ListCopiesByVariant(context.Context, VariantID) ([]Copy, error)
 }
 
+// PhysicalIdentityReader resolves Panta's optional Copy attachment for one
+// exact IndexCore physical identity. A missing Copy is reported as ErrNotFound
+// and is a normal state for physical-first consumers.
+type PhysicalIdentityReader interface {
+	GetCopyByPhysicalIdentity(context.Context, string, string) (Copy, error)
+}
+
 // Repository is the persistence port for the minimum logical resource model.
 // Implementations live outside the catalog package.
 type Repository interface {
 	HierarchyReader
+	PhysicalIdentityReader
 	CreateAsset(context.Context, Asset) error
 	CreateRelease(context.Context, Release) error
 	CreateVariant(context.Context, Variant) error
