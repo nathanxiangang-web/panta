@@ -86,7 +86,7 @@ jobs:
           --health-retries 10
     env:
       PANTA_GATE1_E2E: "1"
-      PANTA_GATE1_INDEXCORE_BINARY: ${{ runner.temp }}/indexcore
+      PANTA_GATE1_INDEXCORE_BINARY: /tmp/panta-gate1-indexcore
       PANTA_GATE1_INDEXCORE_DATABASE_URL: postgres://panta:panta_e2e@127.0.0.1:5432/indexcore_e2e?sslmode=disable
       PANTA_GATE1_PANTA_DATABASE_URL: postgres://panta:panta_e2e@127.0.0.1:5432/panta_e2e?sslmode=disable
     steps:
