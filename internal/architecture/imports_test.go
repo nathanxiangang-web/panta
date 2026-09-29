@@ -77,6 +77,20 @@ func TestGateZeroDomainImportBoundaries(t *testing.T) {
 				"/internal/search", "/internal/agent", "/internal/auth",
 			},
 		},
+		{
+			// The concrete 115 adapter is provider-isolated: it may use its pinned
+			// upstream library and contracts, and nothing else in Panta. In
+			// particular no 115 type may escape into the acquisition domain, and it
+			// must not reach persistence or any integration.
+			packagePath: "github.com/nathanxiangang-web/panta/internal/providers/115",
+			forbidden: []string{
+				"github.com/jackc/pgx", "database/sql",
+				"/internal/acquisition", "/internal/jobs", "/internal/store",
+				"/internal/integrations/indexcore", "/internal/integrations/openlist",
+				"/internal/search", "/internal/agent", "/internal/auth",
+				"/internal/providers/session", "/internal/providers/registry",
+			},
+		},
 	}
 
 	for _, test := range tests {

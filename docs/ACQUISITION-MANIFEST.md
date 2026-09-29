@@ -324,10 +324,70 @@ per provider/connection identity, and any session state lives inside that port. 
 component in this path logs resolved secret values, and the session package is
 covered by the architecture guard so it cannot reach persistence or integrations.
 
+## Concrete 115 downloader adapter
+
+`internal/providers/115` is the first concrete provider. It implements
+`contracts.DownloaderProvider` on the pinned
+`github.com/SheltonZhu/115driver v1.3.5` library, and freezes the D-025 mapping:
+
+```text
+contracts.ProviderID  = "115"
+
+Source.Value          -> the exact URI passed to 115 offline download
+Target.Scope          -> the 115 destination directory ID (wp_path_id)
+Target.Path           -> Panta's expected observation path only
+TaskReference.Value   -> the 115 offline task info_hash
+```
+
+`Target.Path` is never converted into a provider directory ID, and the
+destination is never derived from an OpenList mount or an IndexCore root. The
+source value is passed byte-for-byte: the adapter performs no magnet truncation or
+normalization, which belongs to a future Source Resolver.
+
+Status mapping is frozen and explicit:
+
+```text
+115 status 0   -> PENDING
+115 status 1   -> RUNNING
+115 status 2   -> SUCCEEDED
+115 status -1  -> FAILED
+anything else  -> explicit adapter error
+```
+
+There is no 115 code for a canceled offline task: `CancelDownload` removes the
+task without deleting provider files, so a removed task surfaces as an explicit
+not-found error rather than as a canceled state. Provider `SUCCEEDED` is never
+Panta `READY`.
+
+Safety properties:
+
+```text
+one StartDownload        -> exactly one 115 offline URI task
+zero/multiple/blank hash -> fail closed, never a task reference
+pagination               -> bounded and fail-closed on malformed or
+                            non-progressing page metadata
+cancel                   -> DeleteOfflineTasks([info_hash], false);
+                            downloaded provider files are never deleted
+retry                    -> none in the adapter; the Job Engine owns policy
+cookie material          -> never logged, never returned, never embedded in
+                            an error, and never retained after client import
+```
+
+The adapter reaches 115 only through an adapter-private `Backend` port, so unit
+tests need neither real credentials nor network access. Two construction paths
+exist: `p115.New` wraps an injected backend, and `p115.NewAdapterFromCookie`
+builds the real library client from resolved secret material. Only the latter
+touches the upstream library, and a note in the code records that the first real
+provider call lazily resolves the authenticated 115 user.
+
+The package is covered by the architecture guard: it may import only
+`internal/providers/contracts`, the pinned driver package, and the standard
+library.
+
 ## Deferred capabilities
 
 Source Resolver/provider syntax normalization, the Job worker loop, Manifest
-milestone transition to `AWAITING_VISIBILITY`, the 115 adapter, OpenList
-visibility verification, Mutation Hint/scoped refresh, canonical READY
-orchestration, auth/quota, and API/UI are separately authorized later work.
-A real secret backend and the concrete 115 provider session are also deferred.
+milestone transition to `AWAITING_VISIBILITY`, OpenList visibility verification,
+Mutation Hint/scoped refresh, canonical READY orchestration, auth/quota, and
+API/UI are separately authorized later work. A real secret backend, the 115
+ShareProvider, and 115-specific retry policy are also deferred.
