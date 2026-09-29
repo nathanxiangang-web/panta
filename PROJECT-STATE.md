@@ -6,7 +6,7 @@
 
 **MVP implementation — Gate 2**
 
-Gate 0 and Gate 1 are formally accepted and closed. Gate 2.1 is accepted and merged. Gate 2.2 is authorized and in progress.
+Gate 0 and Gate 1 are formally accepted and closed. Gate 2.1 and Gate 2.2 are accepted and merged. Gate 2.3 is authorized and in progress.
 
 ## Accepted baseline
 
@@ -312,9 +312,20 @@ Explicitly deferred:
 
 ### Gate 2.2 — Physical resource view with optional Catalog attachment
 
-Status: **AUTHORIZED / IN PROGRESS**
+Status: **ACCEPTED**
 
-Tracking: GitHub Issue #19
+Tracking: GitHub Issue #19 / PR #20
+
+Merged:
+- squash commit `60467b113dab6e54e321cfd4b09173e6395c5017`
+
+Acceptance evidence:
+- GitHub Actions run `36542613715` fully green;
+- physical-only resources remain usable without Catalog Copy;
+- unresolved Copy remains usable without forced classification;
+- classified lineage is attached only when complete and consistent;
+- Q5 ambiguity and candidate ordering are preserved;
+- IndexCore presence and Copy availability remain independent facts.
 
 Scope:
 - known root/path resolves through IndexCore Q5;
@@ -334,6 +345,32 @@ Explicitly deferred:
 - public API/UI;
 - acquisition / Mutation Hint / scoped refresh;
 - reconciliation worker.
+
+## Current bounded task
+
+### Gate 2.3 — Explicit unresolved Copy → Variant binding with concurrency-safe monotonic semantics
+
+Status: **AUTHORIZED / IN PROGRESS**
+
+Tracking: GitHub Issue #21
+
+Scope:
+- bind an existing unresolved Copy to an existing Variant;
+- same-target replay is idempotent;
+- different-target rebind fails closed;
+- concurrency-safe one-winner semantics;
+- preserve CopyID, physical identity, StorageBinding, availability and created_at;
+- projector availability updates preserve VariantID.
+
+Explicitly deferred:
+- automatic/Agent classification;
+- reclassification/correction workflow;
+- bulk classification;
+- Search/FTS;
+- Q3 enrichment;
+- public API/UI;
+- acquisition / 115 / Mutation Hint;
+- auth/quota/share.
 
 ## Planned Gate 0 task sequence
 
@@ -377,6 +414,6 @@ Until the relevant gate is accepted, do not implement:
 
 ## Next architect action
 
-Review the Gate 2.2 PR for Issue #19 against physical-first known-path behavior, Q5 ambiguity preservation, optional Catalog attachment, classified-lineage integrity, IndexCore-presence authority, no Search dependency, and full Gate 1/2.1 regression.
+Review the Gate 2.3 PR for Issue #21 against monotonic Copy classification, same-target idempotency, different-target fail-closed semantics, real PostgreSQL concurrency fencing, projector compatibility, and full Gate 1/2.1/2.2 regression.
 
-Do not authorize Gate 2.3 until Gate 2.2 is accepted.
+Do not authorize Gate 2.4 until Gate 2.3 is accepted.
