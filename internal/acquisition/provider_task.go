@@ -26,6 +26,24 @@ var (
 	ErrProviderTaskIdentityChange = errors.New("acquisition provider task identity change")
 )
 
+// ProviderTaskState records side-effect certainty only. It never mirrors provider
+// task lifecycle status, which stays authoritative at the provider.
+type ProviderTaskState string
+
+const (
+	// ProviderTaskStartReserved records that one execution claimed the right to
+	// call StartDownload for this Manifest and Job. The opaque reference is not
+	// yet known, so any later execution must fail closed instead of starting a
+	// second external task.
+	ProviderTaskStartReserved ProviderTaskState = "START_RESERVED"
+	// ProviderTaskReferenceKnown records a durably committed opaque reference.
+	ProviderTaskReferenceKnown ProviderTaskState = "REFERENCE_KNOWN"
+)
+
+func (state ProviderTaskState) Valid() bool {
+	return state == ProviderTaskStartReserved || state == ProviderTaskReferenceKnown
+}
+
 // ProviderTask is the durable linkage between one Manifest, its ACQUISITION Job,
 // and exactly one opaque external provider task. It carries no provider status:
 // the provider stays authoritative for that.
@@ -34,18 +52,31 @@ type ProviderTask struct {
 	JobID           jobs.JobID
 	ProviderID      contracts.ProviderID
 	ProviderTaskRef string
+	State           ProviderTaskState
 	CreatedAt       time.Time
 	UpdatedAt       time.Time
 }
 
+// ReferenceKnown reports whether a durable opaque reference is available.
+func (task ProviderTask) ReferenceKnown() bool {
+	return task.State == ProviderTaskReferenceKnown && task.ProviderTaskRef != ""
+}
+
 // ValidateProviderTask protects the store port from invalid direct callers.
 func ValidateProviderTask(task ProviderTask) error {
-	if task.ManifestID == "" || task.JobID == "" || !task.ProviderID.Valid() ||
-		!ValidProviderTaskRef(task.ProviderTaskRef) || task.CreatedAt.IsZero() || task.UpdatedAt.IsZero() {
+	if task.ManifestID == "" || task.JobID == "" || !task.ProviderID.Valid() || !task.State.Valid() ||
+		task.CreatedAt.IsZero() || task.UpdatedAt.IsZero() || task.UpdatedAt.Before(task.CreatedAt) {
 		return ErrInvalidProviderTask
 	}
-	if task.UpdatedAt.Before(task.CreatedAt) {
-		return ErrInvalidProviderTask
+	switch task.State {
+	case ProviderTaskStartReserved:
+		if task.ProviderTaskRef != "" {
+			return ErrInvalidProviderTask
+		}
+	case ProviderTaskReferenceKnown:
+		if !ValidProviderTaskRef(task.ProviderTaskRef) {
+			return ErrInvalidProviderTask
+		}
 	}
 	return nil
 }
@@ -57,12 +88,46 @@ func ValidProviderTaskRef(value string) bool {
 		utf8.RuneCountInString(value) <= MaxProviderTaskRefLength
 }
 
-// ProviderTaskStore persists the durable provider-task linkage.
+// ProviderTaskClaimRequest asks the store to fence the external side effect.
 //
-// StoreProviderTask must fail closed with ErrProviderTaskIdentityChange when a
-// row already exists for the Manifest or the Job and the recorded identity does
-// not match the supplied task. It must never overwrite a known task reference.
+// Reference must be empty for a start claim and valid for a reference commit.
+type ProviderTaskClaimRequest struct {
+	ManifestID ManifestID
+	JobID      jobs.JobID
+	ProviderID contracts.ProviderID
+	Reference  string
+	Now        time.Time
+}
+
+// ProviderTaskClaimResult reports what the durable store decided.
+type ProviderTaskClaimResult struct {
+	// Task is the durable row that now exists for the Manifest.
+	Task ProviderTask
+	// ClaimedStart is true only when this call exclusively reserved the right to
+	// call StartDownload. Exactly one caller can observe this for a Manifest.
+	ClaimedStart bool
+	// CommittedReference is true when Reference was newly committed durably.
+	CommittedReference bool
+}
+
+// ProviderTaskStore persists the durable provider-task linkage and fences the
+// external side effect.
+//
+// ClaimProviderTask is the only way to obtain permission to call StartDownload.
+// It must be atomic with respect to concurrent callers for the same Manifest and
+// must enforce these semantics:
+//
+//	no row                              -> persist START_RESERVED, ClaimedStart=true
+//	START_RESERVED, Reference valid     -> persist the reference as
+//	                                       REFERENCE_KNOWN, CommittedReference=true
+//	REFERENCE_KNOWN, Reference empty    -> return the known task, ClaimedStart=false
+//	REFERENCE_KNOWN, different reference-> ErrProviderTaskIdentityChange
+//	START_RESERVED, Reference empty     -> ErrInvalidProviderTask
+//
+// A start claim whose reference is never committed must remain durable as
+// START_RESERVED so that later executions fail closed rather than starting a
+// second external task.
 type ProviderTaskStore interface {
 	GetProviderTask(context.Context, ManifestID) (ProviderTask, error)
-	StoreProviderTask(context.Context, ProviderTask) error
+	ClaimProviderTask(context.Context, ProviderTaskClaimRequest) (ProviderTaskClaimResult, error)
 }

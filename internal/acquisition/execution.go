@@ -149,13 +149,20 @@ func (service *ExecutionStepService) Execute(ctx context.Context, request StepRe
 
 	task, err := service.tasks.GetProviderTask(ctx, manifest.ID)
 	if errors.Is(err, ErrProviderTaskNotFound) {
-		return service.startProviderTask(ctx, request, input, downloader)
+		return service.claimAndStartProviderTask(ctx, request, input, downloader)
 	}
 	if err != nil {
 		return "", fmt.Errorf("%w: load provider task: %v", ErrProviderTaskPersistence, err)
 	}
-	if task.ProviderID != input.ProviderID || task.JobID != job.ID || !ValidProviderTaskRef(task.ProviderTaskRef) {
+	if task.ProviderID != input.ProviderID || task.JobID != job.ID {
 		return "", fmt.Errorf("%w: durable provider task for Manifest %s", ErrExecutionIdentityMismatch, manifest.ID)
+	}
+	if !task.ReferenceKnown() {
+		// A previous execution reserved the start but never durably recorded a
+		// reference. The external side effect state is unknown, so a later
+		// execution is forbidden from starting another task.
+		return "", fmt.Errorf("%w: Manifest %s holds a durable start reservation without a task reference",
+			ErrExecutionSideEffectUncertain, manifest.ID)
 	}
 	return service.pollProviderTask(ctx, task, downloader)
 }
@@ -251,35 +258,56 @@ func (service *ExecutionStepService) resolveDownloader(providerID contracts.Prov
 	return binding.Downloader, nil
 }
 
-// startProviderTask performs the single StartDownload call for this execution and
-// records the returned reference durably. When the side effect succeeds but the
-// linkage cannot be persisted, the outcome is explicitly uncertain and no second
-// StartDownload is attempted on this path.
-func (service *ExecutionStepService) startProviderTask(
+// claimAndStartProviderTask durably fences the external side effect before
+// attempting it. Only the single execution that wins the START_RESERVED claim may
+// call StartDownload; every other caller either polls a known reference or fails
+// closed on the reservation.
+func (service *ExecutionStepService) claimAndStartProviderTask(
 	ctx context.Context,
 	request StepRequest,
 	input ExecutionInput,
 	downloader contracts.DownloaderProvider,
 ) (StepOutcome, error) {
-	reference, err := downloader.StartDownload(ctx, input.Download)
-	if err != nil {
-		return "", fmt.Errorf("provider %s StartDownload: %w", input.ProviderID, err)
+	claim, claimErr := service.tasks.ClaimProviderTask(ctx, ProviderTaskClaimRequest{
+		ManifestID: input.ManifestID, JobID: request.JobID, ProviderID: input.ProviderID,
+		Now: service.now().UTC(),
+	})
+	if claimErr != nil {
+		return "", fmt.Errorf("%w: claim provider start for Manifest %s: %v", ErrProviderTaskPersistence, input.ManifestID, claimErr)
+	}
+	if claim.Task.ProviderID != input.ProviderID || claim.Task.JobID != request.JobID {
+		return "", fmt.Errorf("%w: claimed provider task for Manifest %s", ErrExecutionIdentityMismatch, input.ManifestID)
+	}
+	if !claim.ClaimedStart {
+		if !claim.Task.ReferenceKnown() {
+			return "", fmt.Errorf("%w: Manifest %s holds a durable start reservation without a task reference",
+				ErrExecutionSideEffectUncertain, input.ManifestID)
+		}
+		return service.pollProviderTask(ctx, claim.Task, downloader)
+	}
+
+	reference, startErr := downloader.StartDownload(ctx, input.Download)
+	if startErr != nil {
+		return "", fmt.Errorf("provider %s StartDownload: %w", input.ProviderID, startErr)
 	}
 	if !ValidProviderTaskRef(reference.Value) {
 		return "", fmt.Errorf("%w: provider %s", ErrProviderTaskReference, input.ProviderID)
 	}
-	now := service.now().UTC()
-	task := ProviderTask{
+
+	commit, commitErr := service.tasks.ClaimProviderTask(ctx, ProviderTaskClaimRequest{
 		ManifestID: input.ManifestID, JobID: request.JobID, ProviderID: input.ProviderID,
-		ProviderTaskRef: reference.Value, CreatedAt: now, UpdatedAt: now,
+		Reference: reference.Value, Now: service.now().UTC(),
+	})
+	if commitErr != nil {
+		// The external task may exist while its reference is not durably known.
+		// The START_RESERVED row persists, so later executions fail closed.
+		return "", fmt.Errorf("%w: Manifest %s: %v", ErrExecutionSideEffectUncertain, input.ManifestID, commitErr)
 	}
-	if err := service.tasks.StoreProviderTask(ctx, task); err != nil {
-		if errors.Is(err, ErrProviderTaskIdentityChange) {
-			return "", fmt.Errorf("%w: Manifest %s", ErrExecutionIdentityMismatch, input.ManifestID)
-		}
-		return "", fmt.Errorf("%w: Manifest %s: %v", ErrExecutionSideEffectUncertain, input.ManifestID, err)
+	if !commit.CommittedReference || !commit.Task.ReferenceKnown() {
+		return "", fmt.Errorf("%w: Manifest %s did not durably commit a task reference",
+			ErrExecutionSideEffectUncertain, input.ManifestID)
 	}
-	return service.pollProviderTask(ctx, task, downloader)
+	return service.pollProviderTask(ctx, commit.Task, downloader)
 }
 
 // pollProviderTask reads provider task status for an already-linked task. It

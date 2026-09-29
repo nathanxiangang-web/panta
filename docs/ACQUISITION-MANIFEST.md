@@ -117,27 +117,55 @@ Migration `0007_storage_binding_provider_scope.sql` leaves provider scope nullab
 for observation-only bindings, has no default, and rejects empty or overlong
 non-null values.
 
-## Durable provider-task linkage
+## Durable provider-task linkage and the side-effect fence
 
 Gate 3.4 crosses the external side-effect boundary exactly once and records what
 it did. Migration `0008_acquisition_provider_tasks.sql` adds one provider-neutral
-table:
+table, refined by the append-only migration
+`0009_provider_task_side_effect_fence.sql`:
 
 ```text
 acquisition_provider_tasks
   manifest_id        uuid PRIMARY KEY  -> acquisition_manifests
   job_id             uuid NOT NULL UNIQUE -> jobs
   provider_id        text   (bounded opaque registry identity)
-  provider_task_ref  text   (bounded opaque provider reference)
+  provider_task_ref  text NULL (bounded opaque provider reference)
+  state              text   START_RESERVED | REFERENCE_KNOWN
   created_at, updated_at
 ```
 
 One Manifest maps to at most one provider task and one Job maps to at most one
-provider task. Both values are bounded opaque text: Panta never parses or
-normalizes them, and the table stores no provider status because the provider
-remains authoritative for its own task lifecycle. There are no database defaults
-and no provider-specific columns. A conflicting identity fails closed rather than
-overwriting a known task reference.
+provider task. Provider identity and reference values are bounded opaque text:
+Panta never parses or normalizes them, and the table stores no provider status
+because the provider remains authoritative for its own task lifecycle. There are
+no database defaults and no provider-specific columns. A conflicting identity
+fails closed rather than overwriting a known task reference.
+
+`state` records **side-effect certainty only**, never provider task progress. The
+database enforces the invariant so an uncommitted attempt can never look
+successful:
+
+```text
+START_RESERVED    -> provider_task_ref IS NULL
+REFERENCE_KNOWN   -> provider_task_ref IS NOT NULL and non-blank and <= 1024
+```
+
+The durable row is therefore written **before** the external call, not after. It
+exists in two phases:
+
+```text
+no row                                   -> persist START_RESERVED  (exclusive)
+START_RESERVED + reference               -> persist REFERENCE_KNOWN
+START_RESERVED + no reference            -> fail closed, no start
+REFERENCE_KNOWN + same reference         -> idempotent replay
+REFERENCE_KNOWN + different reference    -> identity conflict
+```
+
+The store performs this decision in one transaction under a per-Manifest
+`pg_advisory_xact_lock`, because transactional uniqueness alone cannot serialize
+concurrent claimers: two executions could each observe "no row" before either
+commits and both would be authorized to start a task. Exactly one claimer can
+observe a fresh reservation.
 
 ## One bounded execution step
 
@@ -157,10 +185,16 @@ Gate 3.3 ExecutionInput (ProviderID, CredentialRef, DownloadRequest)
 provider registry lookup + Downloader capability + descriptor identity
         |
         v
-durable provider task known?
-   no  -> StartDownload once, then persist the opaque reference
-   yes -> DownloadStatus for the exact stored reference
+durable provider task state
+   REFERENCE_KNOWN   -> DownloadStatus for the exact stored reference
+   START_RESERVED    -> fail closed: no reference is known
+   no row            -> claim START_RESERVED, then StartDownload once,
+                        then commit the opaque reference
 ```
+
+`StartDownload` is reachable only through a newly won `START_RESERVED` claim, so
+it can happen at most once per Manifest even under concurrent executions, a lost
+reference, or a crash between the external success and the durable commit.
 
 The step fails closed before any provider call when the Job is not an
 `ACQUISITION` Job, its payload does not match the Manifest, the Manifest is not
@@ -187,12 +221,19 @@ state both fail closed.
 
 ## Uncertain external side effects
 
-If `StartDownload` succeeds but persisting the returned reference fails, the step
-returns `ErrExecutionSideEffectUncertain` and never attempts a second
-`StartDownload` on that path. Because no durable reference exists, that outcome
-must be reconciled by an operator rather than treated as ordinary retry: a later
-execution that still has no durable reference is not authorized to assume the
-external side effect did not happen.
+If `StartDownload` succeeds but the returned reference cannot be committed, the
+step returns `ErrExecutionSideEffectUncertain` and the `START_RESERVED` row
+remains durable. Because a start attempt is known while no reference is, that
+outcome must be reconciled by an operator rather than treated as ordinary retry:
+every later execution observes the reservation and fails closed instead of
+starting a second provider task. This holds within the process, across service and
+repository reconstruction, and under concurrent executions.
+
+Reservations are never cleared automatically. A crash before the external call and
+a crash after it are indistinguishable from durable state alone, so releasing a
+`START_RESERVED` row is an explicit operator decision. The marker carries no lease,
+attempt, retry, or provider-status semantics; the Job Engine remains the only
+owner of execution state.
 
 ## Deferred capabilities
 

@@ -199,12 +199,16 @@ acquisition requires an explicit scope and never derives it from the OpenList
 mount or IndexCore root. Provider scope is bounded opaque text and is preserved
 exactly without path normalization.
 
-Gate 3.4 migration `0008_acquisition_provider_tasks.sql` adds the durable
-provider-task linkage: one Manifest and one Job each map to at most one opaque
-provider task reference, stored exactly as the provider returned it. The row is
-written only after `StartDownload` succeeds, and an existing reference is never
-overwritten or re-created. The provider stays authoritative for its own task
-status, and provider success is not Manifest `READY`.
+Gate 3.4 migrations `0008_acquisition_provider_tasks.sql` and
+`0009_provider_task_side_effect_fence.sql` add the durable provider-task linkage:
+one Manifest and one Job each map to at most one opaque provider task reference,
+stored exactly as the provider returned it. The durable row is written *before*
+the external call, in two phases (`START_RESERVED`, then `REFERENCE_KNOWN`) under
+a per-Manifest advisory lock, so at most one execution can ever call
+`StartDownload` and a lost reference fails closed instead of starting a second
+provider task. An existing reference is never overwritten or re-created. The
+provider stays authoritative for its own task status, the fence carries no
+provider lifecycle state, and provider success is not Manifest `READY`.
 
 The module stores no physical inventory and has no IndexCore/OpenList database
 or network dependency. Real clients, Journal cursors/projectors, Copy updates,

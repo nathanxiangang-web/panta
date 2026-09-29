@@ -66,13 +66,15 @@ func (topology *topologyDouble) GetConnection(_ context.Context, id storage.Conn
 	return connection, nil
 }
 
-// taskStoreDouble is an in-memory durable task store. A single instance spans
-// several service instances so tests can prove restart-safe replay.
+// taskStoreDouble is an in-memory implementation of the durable provider-task
+// fence with the same atomic claim semantics as the PostgreSQL store. A single
+// instance spans several service instances so tests can prove restart safety.
 type taskStoreDouble struct {
-	mu         sync.Mutex
-	values     map[acquisition.ManifestID]acquisition.ProviderTask
-	storeCalls int
-	failStore  error
+	mu              sync.Mutex
+	values          map[acquisition.ManifestID]acquisition.ProviderTask
+	claimCalls      int
+	failClaimStart  error
+	failClaimCommit error
 }
 
 func newTaskStoreDouble() *taskStoreDouble {
@@ -89,21 +91,55 @@ func (store *taskStoreDouble) GetProviderTask(_ context.Context, id acquisition.
 	return task, nil
 }
 
-func (store *taskStoreDouble) StoreProviderTask(_ context.Context, task acquisition.ProviderTask) error {
+func (store *taskStoreDouble) ClaimProviderTask(
+	_ context.Context,
+	request acquisition.ProviderTaskClaimRequest,
+) (acquisition.ProviderTaskClaimResult, error) {
 	store.mu.Lock()
 	defer store.mu.Unlock()
-	store.storeCalls++
-	if store.failStore != nil {
-		return store.failStore
-	}
-	if existing, exists := store.values[task.ManifestID]; exists {
-		if existing.JobID != task.JobID || existing.ProviderID != task.ProviderID || existing.ProviderTaskRef != task.ProviderTaskRef {
-			return acquisition.ErrProviderTaskIdentityChange
+	store.claimCalls++
+
+	existing, exists := store.values[request.ManifestID]
+	if !exists {
+		if request.Reference != "" {
+			return acquisition.ProviderTaskClaimResult{}, acquisition.ErrInvalidProviderTask
 		}
-		return nil
+		if store.failClaimStart != nil {
+			return acquisition.ProviderTaskClaimResult{}, store.failClaimStart
+		}
+		reserved := acquisition.ProviderTask{
+			ManifestID: request.ManifestID, JobID: request.JobID, ProviderID: request.ProviderID,
+			State: acquisition.ProviderTaskStartReserved, CreatedAt: request.Now, UpdatedAt: request.Now,
+		}
+		store.values[request.ManifestID] = reserved
+		return acquisition.ProviderTaskClaimResult{Task: reserved, ClaimedStart: true}, nil
 	}
-	store.values[task.ManifestID] = task
-	return nil
+
+	if existing.JobID != request.JobID || existing.ProviderID != request.ProviderID {
+		return acquisition.ProviderTaskClaimResult{}, acquisition.ErrProviderTaskIdentityChange
+	}
+	if existing.ReferenceKnown() {
+		if request.Reference == "" {
+			return acquisition.ProviderTaskClaimResult{Task: existing}, nil
+		}
+		if existing.ProviderTaskRef != request.Reference {
+			return acquisition.ProviderTaskClaimResult{}, acquisition.ErrProviderTaskIdentityChange
+		}
+		return acquisition.ProviderTaskClaimResult{Task: existing, CommittedReference: true}, nil
+	}
+	if request.Reference == "" {
+		// A reservation without a reference may not authorize a second start.
+		return acquisition.ProviderTaskClaimResult{Task: existing}, nil
+	}
+	if store.failClaimCommit != nil {
+		return acquisition.ProviderTaskClaimResult{}, store.failClaimCommit
+	}
+	committed := existing
+	committed.ProviderTaskRef = request.Reference
+	committed.State = acquisition.ProviderTaskReferenceKnown
+	committed.UpdatedAt = request.Now
+	store.values[request.ManifestID] = committed
+	return acquisition.ProviderTaskClaimResult{Task: committed, CommittedReference: true}, nil
 }
 
 // scriptedProvider is a provider-neutral Downloader double that records exactly
@@ -177,6 +213,12 @@ func (provider *scriptedProvider) setState(reference string, state contracts.Tas
 	provider.statuses[reference] = contracts.TaskStatus{Reference: contracts.TaskReference{Value: reference}, State: state}
 }
 
+// adoptTask teaches the double about a task reference created before a simulated
+// process restart, without recording a StartDownload call.
+func (provider *scriptedProvider) adoptTask(reference string, state contracts.TaskState) {
+	provider.setState(reference, state)
+}
+
 func (provider *scriptedProvider) counts() (start int, status int, refs []string) {
 	provider.mu.Lock()
 	defer provider.mu.Unlock()
@@ -205,8 +247,8 @@ const (
 	executionProviderID contracts.ProviderID = "gate0-memory"
 	executionBindingID                       = storage.BindingID("b0000000-0000-4000-8000-000000000001")
 	executionConnID                          = storage.ConnectionID("c0000000-0000-4000-8000-000000000001")
-	executionManifestID                      = acquisition.ManifestID("m0000000-0000-4000-8000-000000000001")
-	executionJobID                           = jobs.JobID("j0000000-0000-4000-8000-000000000001")
+	executionManifestID                      = acquisition.ManifestID("b0000000-0000-4000-8000-000000000010")
+	executionJobID                           = jobs.JobID("b0000000-0000-4000-8000-000000000020")
 	executionOwner                           = "worker-1"
 	executionAttempt                         = 2
 )
@@ -322,6 +364,15 @@ func newExecutionService(
 
 func (fixture *executionFixture) job() jobs.Job { return fixture.jobsvc.values[executionJobID] }
 
+func (fixture *executionFixture) durableTask(t *testing.T) acquisition.ProviderTask {
+	t.Helper()
+	task, err := fixture.tasks.GetProviderTask(context.Background(), executionManifestID)
+	if err != nil {
+		t.Fatalf("durable provider task = %v", err)
+	}
+	return task
+}
+
 // ---------------------------------------------------------------------------
 // tests 1-2: Job and Manifest linkage
 // ---------------------------------------------------------------------------
@@ -340,8 +391,8 @@ func TestExecutionStepRejectsNonAcquisitionJob(t *testing.T) {
 			if start, status, _ := fixture.provider.counts(); start != 0 || status != 0 {
 				t.Fatalf("provider calls start=%d status=%d, want 0/0", start, status)
 			}
-			if fixture.tasks.storeCalls != 0 {
-				t.Fatalf("store calls = %d, want 0", fixture.tasks.storeCalls)
+			if fixture.tasks.claimCalls != 0 {
+				t.Fatalf("claim calls = %d, want 0", fixture.tasks.claimCalls)
 			}
 		})
 	}
@@ -354,12 +405,12 @@ func TestExecutionStepRejectsJobManifestLinkageMismatch(t *testing.T) {
 	}{
 		{name: "payload points at another Manifest", mutate: func(fixture *executionFixture) {
 			job := fixture.job()
-			job.Payload = executionPayload(acquisition.ManifestID("m0000000-0000-4000-8000-0000000000ff"))
+			job.Payload = executionPayload(acquisition.ManifestID("b0000000-0000-4000-8000-0000000000ff"))
 			fixture.jobsvc.values[executionJobID] = job
 		}},
 		{name: "Manifest is not linked to the Job", mutate: func(fixture *executionFixture) {
 			manifest := fixture.manifests.values[executionManifestID]
-			other := jobs.JobID("j0000000-0000-4000-8000-0000000000ff")
+			other := jobs.JobID("b0000000-0000-4000-8000-0000000000ff")
 			manifest.JobID = &other
 			fixture.manifests.values[executionManifestID] = manifest
 		}},
@@ -370,7 +421,7 @@ func TestExecutionStepRejectsJobManifestLinkageMismatch(t *testing.T) {
 		}},
 		{name: "idempotency key does not match Manifest", mutate: func(fixture *executionFixture) {
 			job := fixture.job()
-			other := acquisition.AcquisitionJobIdempotencyKey("m0000000-0000-4000-8000-0000000000ff")
+			other := acquisition.AcquisitionJobIdempotencyKey("b0000000-0000-4000-8000-0000000000ff")
 			job.IdempotencyKey = &other
 			fixture.jobsvc.values[executionJobID] = job
 		}},
@@ -488,8 +539,8 @@ func TestExecutionStepRequiresFencedRunningLease(t *testing.T) {
 			if start, status, _ := fixture.provider.counts(); start != 0 || status != 0 {
 				t.Fatalf("provider calls start=%d status=%d, want 0/0", start, status)
 			}
-			if fixture.tasks.storeCalls != 0 {
-				t.Fatalf("store calls = %d, want 0", fixture.tasks.storeCalls)
+			if fixture.tasks.claimCalls != 0 {
+				t.Fatalf("claim calls = %d, want 0", fixture.tasks.claimCalls)
 			}
 		})
 	}
@@ -499,7 +550,7 @@ func TestExecutionStepRejectsMissingJobOrManifest(t *testing.T) {
 	t.Run("missing Job", func(t *testing.T) {
 		fixture := newExecutionFixture(t)
 		request := fixture.request
-		request.JobID = jobs.JobID("j0000000-0000-4000-8000-00000000ffff")
+		request.JobID = jobs.JobID("b0000000-0000-4000-8000-00000000ffff")
 		if _, err := fixture.service.Execute(context.Background(), request); !errors.Is(err, acquisition.ErrExecutionJobMismatch) {
 			t.Fatalf("Execute() error = %v, want ErrExecutionJobMismatch", err)
 		}
@@ -531,10 +582,10 @@ func TestExecutionStepRejectsUnregisteredProvider(t *testing.T) {
 
 func TestExecutionStepRejectsProviderWithoutDownloaderCapability(t *testing.T) {
 	fixture := newExecutionFixture(t)
-	storagelessDescriptor := contracts.Descriptor{
+	storageOnly := contracts.Descriptor{
 		ID: executionProviderID, DisplayName: "storage only", Capabilities: contracts.CapabilitySet{Storage: true},
 	}
-	fixture.catalog.providers[executionProviderID] = acquisition.DownloaderBinding{Descriptor: storagelessDescriptor}
+	fixture.catalog.providers[executionProviderID] = acquisition.DownloaderBinding{Descriptor: storageOnly}
 
 	if _, err := fixture.service.Execute(context.Background(), fixture.request); !errors.Is(err, acquisition.ErrProviderNotDownloader) {
 		t.Fatalf("Execute() error = %v, want ErrProviderNotDownloader", err)
@@ -583,9 +634,9 @@ func TestExecutionStepStartsDownloadOnceAndPersistsOpaqueReference(t *testing.T)
 	if status != 1 || len(refs) != 1 || refs[0] != opaque {
 		t.Fatalf("DownloadStatus calls = %d refs = %q, want exactly the stored opaque reference %q", status, refs, opaque)
 	}
-	stored := fixture.tasks.values[executionManifestID]
-	if stored.ProviderTaskRef != opaque {
-		t.Fatalf("stored provider task ref = %q, want exact opaque %q", stored.ProviderTaskRef, opaque)
+	stored := fixture.durableTask(t)
+	if !stored.ReferenceKnown() || stored.ProviderTaskRef != opaque {
+		t.Fatalf("durable provider task = %#v, want REFERENCE_KNOWN with exact opaque %q", stored, opaque)
 	}
 	if stored.JobID != executionJobID || stored.ProviderID != executionProviderID {
 		t.Fatalf("stored provider task = %#v", stored)
@@ -622,9 +673,6 @@ func TestExecutionStepReplayNeverStartsDownloadAgain(t *testing.T) {
 		if ref != "provider-task-0001" {
 			t.Fatalf("DownloadStatus ref[%d] = %q, want the exact stored reference", index, ref)
 		}
-	}
-	if fixture.tasks.storeCalls != 1 {
-		t.Fatalf("store calls = %d, want exactly 1", fixture.tasks.storeCalls)
 	}
 }
 
@@ -674,8 +722,17 @@ func TestExecutionStepRejectsInvalidProviderTaskReference(t *testing.T) {
 			if _, err := fixture.service.Execute(context.Background(), fixture.request); !errors.Is(err, acquisition.ErrProviderTaskReference) {
 				t.Fatalf("Execute() error = %v, want ErrProviderTaskReference", err)
 			}
-			if _, err := fixture.tasks.GetProviderTask(context.Background(), executionManifestID); !errors.Is(err, acquisition.ErrProviderTaskNotFound) {
-				t.Fatalf("durable task after invalid reference = %v, want not found", err)
+			// The start reservation survives, so the external side effect can
+			// never be repeated even though the reference was unusable.
+			stored := fixture.durableTask(t)
+			if stored.State != acquisition.ProviderTaskStartReserved || stored.ProviderTaskRef != "" {
+				t.Fatalf("durable task = %#v, want an uncommitted START_RESERVED fence", stored)
+			}
+			if _, err := fixture.service.Execute(context.Background(), fixture.request); !errors.Is(err, acquisition.ErrExecutionSideEffectUncertain) {
+				t.Fatalf("second Execute() error = %v, want ErrExecutionSideEffectUncertain", err)
+			}
+			if start, _, _ := fixture.provider.counts(); start != 1 {
+				t.Fatalf("StartDownload calls = %d, want exactly 1", start)
 			}
 		})
 	}
@@ -700,9 +757,8 @@ func TestExecutionStepFailsClosedOnDurableTaskIdentityMismatch(t *testing.T) {
 	}{
 		{name: "different provider", mutate: func(task *acquisition.ProviderTask) { task.ProviderID = "other-provider" }},
 		{name: "different Job", mutate: func(task *acquisition.ProviderTask) {
-			task.JobID = jobs.JobID("j0000000-0000-4000-8000-0000000000ff")
+			task.JobID = jobs.JobID("b0000000-0000-4000-8000-0000000000ff")
 		}},
-		{name: "empty task reference", mutate: func(task *acquisition.ProviderTask) { task.ProviderTaskRef = "  " }},
 	}
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {
@@ -726,12 +782,12 @@ func TestExecutionStepFailsClosedOnDurableTaskIdentityMismatch(t *testing.T) {
 }
 
 // ---------------------------------------------------------------------------
-// tests 15-16: uncertain external side effect
+// tests 15-16: uncertain external side effect and the durable fence
 // ---------------------------------------------------------------------------
 
-func TestExecutionStepReportsUncertainSideEffectWhenLinkageCannotPersist(t *testing.T) {
+func TestExecutionStepReportsUncertainSideEffectWhenReferenceCannotCommit(t *testing.T) {
 	fixture := newExecutionFixture(t)
-	fixture.tasks.failStore = errors.New("injected persistence failure")
+	fixture.tasks.failClaimCommit = errors.New("injected reference commit failure")
 
 	outcome, err := fixture.service.Execute(context.Background(), fixture.request)
 	if !errors.Is(err, acquisition.ErrExecutionSideEffectUncertain) {
@@ -747,36 +803,79 @@ func TestExecutionStepReportsUncertainSideEffectWhenLinkageCannotPersist(t *test
 	if status != 0 {
 		t.Fatalf("DownloadStatus calls = %d, want 0 because no reference was durably known", status)
 	}
-	if _, err := fixture.tasks.GetProviderTask(context.Background(), executionManifestID); !errors.Is(err, acquisition.ErrProviderTaskNotFound) {
-		t.Fatalf("durable task = %v, want not found after failed persistence", err)
+	// The fence is durable even though the reference was lost.
+	stored := fixture.durableTask(t)
+	if stored.State != acquisition.ProviderTaskStartReserved || stored.ProviderTaskRef != "" {
+		t.Fatalf("durable task = %#v, want START_RESERVED with no reference", stored)
 	}
 }
 
-func TestExecutionStepUncertainSideEffectNeverReportsOrdinaryOutcome(t *testing.T) {
+// TestExecutionStepUncertainFenceForbidsAnyFurtherStartDownload is the Round 2
+// blocker evidence: after the external side effect succeeded but its reference
+// could not be committed, no later execution in the same process may start
+// another provider task.
+func TestExecutionStepUncertainFenceForbidsAnyFurtherStartDownload(t *testing.T) {
 	fixture := newExecutionFixture(t)
-	fixture.tasks.failStore = errors.New("injected persistence failure")
+	fixture.tasks.failClaimCommit = errors.New("injected reference commit failure")
 
-	outcomes := map[acquisition.StepOutcome]bool{}
-	for attempt := 0; attempt < 3; attempt++ {
+	for attempt := 0; attempt < 4; attempt++ {
 		outcome, err := fixture.service.Execute(context.Background(), fixture.request)
 		if !errors.Is(err, acquisition.ErrExecutionSideEffectUncertain) {
 			t.Fatalf("attempt %d error = %v, want ErrExecutionSideEffectUncertain", attempt, err)
 		}
-		// The uncertain path must never report a provider progress, success,
-		// failure, or cancel outcome that a caller could act on as if the
-		// external side effect were safely known.
 		if outcome != "" {
 			t.Fatalf("attempt %d outcome = %q, want empty", attempt, outcome)
 		}
-		outcomes[outcome] = true
+		start, _, _ := fixture.provider.counts()
+		if start != 1 {
+			t.Fatalf("after attempt %d StartDownload calls = %d, want exactly 1", attempt, start)
+		}
 	}
-	if len(outcomes) != 1 || !outcomes[""] {
-		t.Fatalf("uncertain outcomes = %v, want only the empty outcome", outcomes)
+}
+
+// TestExecutionStepUncertainFenceSurvivesRepositoryReconstruction proves the
+// fence is durable state rather than process memory: rebuilding the whole service
+// against the same store still refuses to start a second provider task.
+func TestExecutionStepUncertainFenceSurvivesRepositoryReconstruction(t *testing.T) {
+	fixture := newExecutionFixture(t)
+	fixture.tasks.failClaimCommit = errors.New("injected reference commit failure")
+	if _, err := fixture.service.Execute(context.Background(), fixture.request); !errors.Is(err, acquisition.ErrExecutionSideEffectUncertain) {
+		t.Fatalf("initial Execute() error = %v", err)
 	}
-	// No durable reference may be invented, so a later execution still has no
-	// known task: it must require reconciliation rather than silent recreation.
-	if _, err := fixture.tasks.GetProviderTask(context.Background(), executionManifestID); !errors.Is(err, acquisition.ErrProviderTaskNotFound) {
-		t.Fatalf("durable task = %v, want not found", err)
+
+	// Reconstruct: new resolver, new service, same durable store.
+	resolver, err := acquisition.NewExecutionInputResolver(fixture.manifests, executionTopology("library"))
+	if err != nil {
+		t.Fatalf("NewExecutionInputResolver() error = %v", err)
+	}
+	restarted := newExecutionService(t, resolver, fixture.manifests, fixture.jobsvc, fixture.catalog, fixture.tasks)
+	// Even with persistence healthy again, the reservation forbids a new start.
+	fixture.tasks.failClaimCommit = nil
+
+	for attempt := 0; attempt < 3; attempt++ {
+		if _, err := restarted.Execute(context.Background(), fixture.request); !errors.Is(err, acquisition.ErrExecutionSideEffectUncertain) {
+			t.Fatalf("restarted attempt %d error = %v, want ErrExecutionSideEffectUncertain", attempt, err)
+		}
+	}
+	if start, status, _ := fixture.provider.counts(); start != 1 || status != 0 {
+		t.Fatalf("restarted provider calls start=%d status=%d, want exactly one start and no poll", start, status)
+	}
+	stored := fixture.durableTask(t)
+	if stored.State != acquisition.ProviderTaskStartReserved {
+		t.Fatalf("durable task state = %q, want START_RESERVED", stored.State)
+	}
+}
+
+// TestExecutionStepRejectsReferenceCommitWithoutReservation fails closed when a
+// caller tries to commit a reference for a Manifest that holds no reservation.
+func TestExecutionStepRejectsReferenceCommitWithoutReservation(t *testing.T) {
+	store := newTaskStoreDouble()
+	request := acquisition.ProviderTaskClaimRequest{
+		ManifestID: executionManifestID, JobID: executionJobID, ProviderID: executionProviderID,
+		Reference: "provider-task-0001", Now: executionNow,
+	}
+	if _, err := store.ClaimProviderTask(context.Background(), request); !errors.Is(err, acquisition.ErrInvalidProviderTask) {
+		t.Fatalf("reference commit without reservation error = %v, want ErrInvalidProviderTask", err)
 	}
 }
 
@@ -794,8 +893,116 @@ func TestExecutionStepProviderStartFailureIsAttributedAndNotPersisted(t *testing
 	if !strings.Contains(err.Error(), "provider transport exploded") {
 		t.Fatalf("error %v does not attribute the provider failure", err)
 	}
-	if fixture.tasks.storeCalls != 0 {
-		t.Fatalf("store calls = %d, want 0", fixture.tasks.storeCalls)
+	stored := fixture.durableTask(t)
+	if stored.State != acquisition.ProviderTaskStartReserved {
+		t.Fatalf("durable state = %q, want START_RESERVED", stored.State)
+	}
+}
+
+// ---------------------------------------------------------------------------
+// concurrency: at most one StartDownload per Manifest
+// ---------------------------------------------------------------------------
+
+func TestExecutionStepConcurrentExecutionsStartAtMostOneProviderTask(t *testing.T) {
+	const workers = 8
+	fixture := newExecutionFixture(t)
+	fixture.provider.startReference = contracts.TaskReference{Value: "provider-task-0001"}
+	fixture.provider.setState("provider-task-0001", contracts.TaskStateRunning)
+
+	var waitGroup sync.WaitGroup
+	outcomes := make([]acquisition.StepOutcome, workers)
+	errs := make([]error, workers)
+	start := make(chan struct{})
+	for worker := 0; worker < workers; worker++ {
+		waitGroup.Add(1)
+		go func(index int) {
+			defer waitGroup.Done()
+			<-start
+			outcomes[index], errs[index] = fixture.service.Execute(context.Background(), executionRequest())
+		}(worker)
+	}
+	close(start)
+	waitGroup.Wait()
+
+	startCalls, statusCalls, refs := fixture.provider.counts()
+	if startCalls != 1 {
+		t.Fatalf("StartDownload calls = %d across %d concurrent executions, want exactly 1", startCalls, workers)
+	}
+	// Every execution that observes the committed reference may poll it; what
+	// matters is that all polls use the single committed reference.
+	if statusCalls < 1 || statusCalls > workers {
+		t.Fatalf("DownloadStatus calls = %d, want between 1 and %d", statusCalls, workers)
+	}
+	if len(refs) != statusCalls {
+		t.Fatalf("polled references = %q, want %d entries", refs, statusCalls)
+	}
+	for index, ref := range refs {
+		if ref != "provider-task-0001" {
+			t.Fatalf("polled reference[%d] = %q, want the single committed reference", index, ref)
+		}
+	}
+
+	var inProgress, uncertain int
+	for index := 0; index < workers; index++ {
+		if errs[index] == nil {
+			if outcomes[index] != acquisition.OutcomeProviderInProgress {
+				t.Fatalf("worker %d outcome = %q, want PROVIDER_IN_PROGRESS", index, outcomes[index])
+			}
+			inProgress++
+			continue
+		}
+		if !errors.Is(errs[index], acquisition.ErrExecutionSideEffectUncertain) {
+			t.Fatalf("worker %d error = %v, want nil or ErrExecutionSideEffectUncertain", index, errs[index])
+		}
+		if outcomes[index] != "" {
+			t.Fatalf("worker %d uncertain outcome = %q, want empty", index, outcomes[index])
+		}
+		uncertain++
+	}
+	if inProgress+uncertain != workers {
+		t.Fatalf("in_progress=%d uncertain=%d, want %d total", inProgress, uncertain, workers)
+	}
+	if inProgress < 1 {
+		t.Fatalf("workers observing the committed reference = %d, want at least 1", inProgress)
+	}
+	stored := fixture.durableTask(t)
+	if !stored.ReferenceKnown() || stored.ProviderTaskRef != "provider-task-0001" {
+		t.Fatalf("durable task = %#v, want the single committed reference", stored)
+	}
+}
+
+// TestExecutionStepConcurrentReservationLosersFailClosed covers the window where
+// the winner has reserved the start but has not yet committed a reference.
+func TestExecutionStepConcurrentReservationLosersFailClosed(t *testing.T) {
+	const workers = 8
+	fixture := newExecutionFixture(t)
+	fixture.tasks.failClaimCommit = errors.New("injected reference commit failure")
+
+	var waitGroup sync.WaitGroup
+	errs := make([]error, workers)
+	start := make(chan struct{})
+	for worker := 0; worker < workers; worker++ {
+		waitGroup.Add(1)
+		go func(index int) {
+			defer waitGroup.Done()
+			<-start
+			_, errs[index] = fixture.service.Execute(context.Background(), executionRequest())
+		}(worker)
+	}
+	close(start)
+	waitGroup.Wait()
+
+	if startCalls, _, _ := fixture.provider.counts(); startCalls != 1 {
+		t.Fatalf("StartDownload calls = %d across %d concurrent executions, want exactly 1", startCalls, workers)
+	}
+	for index, err := range errs {
+		if !errors.Is(err, acquisition.ErrExecutionSideEffectUncertain) {
+			t.Fatalf("worker %d error = %v, want ErrExecutionSideEffectUncertain", index, err)
+		}
+	}
+	stored := fixture.durableTask(t)
+	if stored.State != acquisition.ProviderTaskStartReserved || stored.ProviderTaskRef != "" {
+		t.Fatalf("durable task = %#v, want STOPPED at START_RESERVED", stored)
 	}
 }
 
@@ -859,8 +1066,8 @@ func TestExecutionStepRestartWithFreshProviderPollsStoredReference(t *testing.T)
 	if err != nil {
 		t.Fatalf("durable provider task after startup execution = %v", err)
 	}
-	if !acquisition.ValidProviderTaskRef(stored.ProviderTaskRef) {
-		t.Fatalf("durable provider task reference = %q", stored.ProviderTaskRef)
+	if !stored.ReferenceKnown() {
+		t.Fatalf("durable provider task = %#v, want a known reference", stored)
 	}
 
 	// Restart: a brand-new provider that only knows the durable reference.
@@ -928,10 +1135,56 @@ func TestExecutionStepNilDependenciesRejected(t *testing.T) {
 	}
 }
 
-// adoptTask teaches the double about a task reference that was created before a
-// simulated process restart, without recording a StartDownload call.
-func (provider *scriptedProvider) adoptTask(reference string, state contracts.TaskState) {
-	provider.mu.Lock()
-	defer provider.mu.Unlock()
-	provider.statuses[reference] = contracts.TaskStatus{Reference: contracts.TaskReference{Value: reference}, State: state}
+// ---------------------------------------------------------------------------
+// provider task validation
+// ---------------------------------------------------------------------------
+
+func TestProviderTaskValidationEnforcesSideEffectState(t *testing.T) {
+	base := acquisition.ProviderTask{
+		ManifestID: executionManifestID, JobID: executionJobID, ProviderID: executionProviderID,
+		State: acquisition.ProviderTaskReferenceKnown, ProviderTaskRef: "task-1",
+		CreatedAt: executionNow, UpdatedAt: executionNow,
+	}
+	if err := acquisition.ValidateProviderTask(base); err != nil {
+		t.Fatalf("ValidateProviderTask(known reference) error = %v", err)
+	}
+	reserved := base
+	reserved.State = acquisition.ProviderTaskStartReserved
+	reserved.ProviderTaskRef = ""
+	if err := acquisition.ValidateProviderTask(reserved); err != nil {
+		t.Fatalf("ValidateProviderTask(reservation) error = %v", err)
+	}
+	invalid := []struct {
+		name   string
+		mutate func(*acquisition.ProviderTask)
+	}{
+		{name: "reservation with a reference", mutate: func(task *acquisition.ProviderTask) {
+			task.State = acquisition.ProviderTaskStartReserved
+			task.ProviderTaskRef = "task-1"
+		}},
+		{name: "known state without a reference", mutate: func(task *acquisition.ProviderTask) {
+			task.State = acquisition.ProviderTaskReferenceKnown
+			task.ProviderTaskRef = ""
+		}},
+		{name: "known state with whitespace reference", mutate: func(task *acquisition.ProviderTask) {
+			task.State = acquisition.ProviderTaskReferenceKnown
+			task.ProviderTaskRef = "   "
+		}},
+		{name: "unknown state", mutate: func(task *acquisition.ProviderTask) { task.State = "SOMETHING" }},
+		{name: "empty state", mutate: func(task *acquisition.ProviderTask) { task.State = "" }},
+		{name: "zero created_at", mutate: func(task *acquisition.ProviderTask) { task.CreatedAt = time.Time{} }},
+		{name: "updated before created", mutate: func(task *acquisition.ProviderTask) {
+			task.UpdatedAt = executionNow.Add(-time.Hour)
+		}},
+		{name: "empty provider id", mutate: func(task *acquisition.ProviderTask) { task.ProviderID = "" }},
+	}
+	for _, test := range invalid {
+		t.Run(test.name, func(t *testing.T) {
+			candidate := base
+			test.mutate(&candidate)
+			if err := acquisition.ValidateProviderTask(candidate); !errors.Is(err, acquisition.ErrInvalidProviderTask) {
+				t.Fatalf("ValidateProviderTask() error = %v, want ErrInvalidProviderTask", err)
+			}
+		})
+	}
 }

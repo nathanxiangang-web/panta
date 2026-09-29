@@ -14,17 +14,21 @@ import (
 )
 
 const acquisitionProviderTaskColumns = `
-manifest_id::text, job_id::text, provider_id, provider_task_ref, created_at, updated_at`
+manifest_id::text, job_id::text, provider_id, provider_task_ref, state, created_at, updated_at`
+
+// providerTaskFenceLockClass namespaces the transaction-scoped advisory lock that
+// serializes claim decisions per Manifest. Without it, two concurrent claimers
+// could both observe "no row" before either commits, and both would be authorized
+// to start an external provider task.
+const providerTaskFenceLockClass = 3401
 
 type acquisitionProviderTaskDB interface {
-	Exec(context.Context, string, ...any) (pgconn.CommandTag, error)
+	Begin(context.Context) (pgx.Tx, error)
 	QueryRow(context.Context, string, ...any) pgx.Row
 }
 
-// AcquisitionProviderTaskRepository persists the durable provider-task linkage.
-// It never overwrites an existing task reference: a conflicting identity fails
-// closed with ErrProviderTaskIdentityChange so an uncertain external side effect
-// is never silently re-linked to a different task.
+// AcquisitionProviderTaskRepository persists the durable provider-task linkage
+// and fences the external side effect.
 type AcquisitionProviderTaskRepository struct {
 	db acquisitionProviderTaskDB
 }
@@ -54,54 +58,122 @@ WHERE manifest_id = $1`, string(manifestID)))
 	return task, nil
 }
 
-// StoreProviderTask inserts the linkage exactly once. ON CONFLICT DO NOTHING
-// keeps a known task reference immutable. A conflict is either the same identity
-// (idempotent replay) or a competing linkage that must fail closed.
-func (repository *AcquisitionProviderTaskRepository) StoreProviderTask(ctx context.Context, task acquisition.ProviderTask) error {
-	if err := acquisition.ValidateProviderTask(task); err != nil {
-		return err
+// ClaimProviderTask is the single atomic entry point that authorizes a provider
+// start. It runs inside one transaction holding a per-Manifest advisory lock, so
+// exactly one caller can observe a fresh START_RESERVED claim or commit a
+// reference for a reserved row.
+func (repository *AcquisitionProviderTaskRepository) ClaimProviderTask(
+	ctx context.Context,
+	request acquisition.ProviderTaskClaimRequest,
+) (acquisition.ProviderTaskClaimResult, error) {
+	if request.ManifestID == "" || request.JobID == "" || !request.ProviderID.Valid() || request.Now.IsZero() {
+		return acquisition.ProviderTaskClaimResult{}, acquisition.ErrInvalidProviderTask
 	}
-	if _, err := repository.db.Exec(ctx, `
-INSERT INTO acquisition_provider_tasks (
-    manifest_id, job_id, provider_id, provider_task_ref, created_at, updated_at
-) VALUES ($1, $2, $3, $4, $5, $6)
-ON CONFLICT DO NOTHING`,
-		string(task.ManifestID), string(task.JobID), string(task.ProviderID), task.ProviderTaskRef,
-		task.CreatedAt, task.UpdatedAt,
-	); err != nil {
-		return providerTaskWriteError("store provider task", err)
+	if request.Reference != "" && !acquisition.ValidProviderTaskRef(request.Reference) {
+		return acquisition.ProviderTaskClaimResult{}, acquisition.ErrInvalidProviderTask
 	}
-	stored, err := scanAcquisitionProviderTask(repository.db.QueryRow(ctx, `SELECT `+acquisitionProviderTaskColumns+`
+
+	tx, err := repository.db.Begin(ctx)
+	if err != nil {
+		return acquisition.ProviderTaskClaimResult{}, providerTaskPersistenceError("begin claim transaction", err)
+	}
+	defer func() { _ = tx.Rollback(context.Background()) }()
+
+	if _, err := tx.Exec(ctx, `SELECT pg_advisory_xact_lock($1, hashtext($2))`,
+		providerTaskFenceLockClass, string(request.ManifestID)); err != nil {
+		return acquisition.ProviderTaskClaimResult{}, providerTaskPersistenceError("lock provider task fence", err)
+	}
+
+	existing, err := scanAcquisitionProviderTask(tx.QueryRow(ctx, `SELECT `+acquisitionProviderTaskColumns+`
 FROM acquisition_provider_tasks
-WHERE manifest_id = $1`, string(task.ManifestID)))
-	if err == nil {
-		if stored.JobID != task.JobID || stored.ProviderID != task.ProviderID || stored.ProviderTaskRef != task.ProviderTaskRef {
-			return fmt.Errorf("%w: Manifest %s", acquisition.ErrProviderTaskIdentityChange, task.ManifestID)
+WHERE manifest_id = $1
+FOR UPDATE`, string(request.ManifestID)))
+	switch {
+	case err == nil:
+		result, err := repository.resolveExisting(ctx, tx, request, existing)
+		if err != nil {
+			return acquisition.ProviderTaskClaimResult{}, err
 		}
-		return nil
+		if err := tx.Commit(ctx); err != nil {
+			return acquisition.ProviderTaskClaimResult{}, providerTaskPersistenceError("commit provider task claim", err)
+		}
+		return result, nil
+	case !errors.Is(err, pgx.ErrNoRows):
+		return acquisition.ProviderTaskClaimResult{}, providerTaskPersistenceError("lock provider task", err)
 	}
-	if !errors.Is(err, pgx.ErrNoRows) {
-		return providerTaskPersistenceError("read stored provider task", err)
+
+	// No row exists: this caller exclusively reserves the start attempt.
+	if request.Reference != "" {
+		return acquisition.ProviderTaskClaimResult{}, fmt.Errorf("%w: reference supplied without a start reservation",
+			acquisition.ErrInvalidProviderTask)
 	}
-	// No row for this Manifest: the Job is already linked to a different
-	// Manifest, which the MVP uniqueness rule forbids.
-	var holder string
-	if err := repository.db.QueryRow(ctx, `
-SELECT manifest_id::text
-FROM acquisition_provider_tasks
-WHERE job_id = $1`, string(task.JobID)).Scan(&holder); err == nil {
-		return fmt.Errorf("%w: Job %s is already linked to Manifest %s", acquisition.ErrProviderTaskConflict, task.JobID, holder)
-	} else if !errors.Is(err, pgx.ErrNoRows) {
-		return providerTaskPersistenceError("read competing provider task", err)
+	reserved, err := scanAcquisitionProviderTask(tx.QueryRow(ctx, `
+INSERT INTO acquisition_provider_tasks (
+    manifest_id, job_id, provider_id, provider_task_ref, state, created_at, updated_at
+) VALUES ($1, $2, $3, NULL, 'START_RESERVED', $4, $4)
+RETURNING `+acquisitionProviderTaskColumns,
+		string(request.ManifestID), string(request.JobID), string(request.ProviderID), request.Now))
+	if err != nil {
+		return acquisition.ProviderTaskClaimResult{}, providerTaskWriteError("reserve provider start", err)
 	}
-	return providerTaskPersistenceError("read stored provider task", errors.New("provider task insert was not persisted"))
+	if err := tx.Commit(ctx); err != nil {
+		return acquisition.ProviderTaskClaimResult{}, providerTaskPersistenceError("commit provider start reservation", err)
+	}
+	return acquisition.ProviderTaskClaimResult{Task: reserved, ClaimedStart: true}, nil
+}
+
+// resolveExisting decides what a claim may do against an already durable row.
+func (repository *AcquisitionProviderTaskRepository) resolveExisting(
+	ctx context.Context,
+	tx pgx.Tx,
+	request acquisition.ProviderTaskClaimRequest,
+	existing acquisition.ProviderTask,
+) (acquisition.ProviderTaskClaimResult, error) {
+	if existing.JobID != request.JobID || existing.ProviderID != request.ProviderID {
+		return acquisition.ProviderTaskClaimResult{}, fmt.Errorf("%w: Manifest %s",
+			acquisition.ErrProviderTaskIdentityChange, request.ManifestID)
+	}
+	switch existing.State {
+	case acquisition.ProviderTaskReferenceKnown:
+		if request.Reference == "" {
+			return acquisition.ProviderTaskClaimResult{Task: existing}, nil
+		}
+		if existing.ProviderTaskRef != request.Reference {
+			return acquisition.ProviderTaskClaimResult{}, fmt.Errorf("%w: Manifest %s already holds a different task reference",
+				acquisition.ErrProviderTaskIdentityChange, request.ManifestID)
+		}
+		return acquisition.ProviderTaskClaimResult{Task: existing, CommittedReference: true}, nil
+	case acquisition.ProviderTaskStartReserved:
+		if request.Reference == "" {
+			// The caller holds no reference and may not start a second task.
+			return acquisition.ProviderTaskClaimResult{Task: existing}, nil
+		}
+		committed, err := scanAcquisitionProviderTask(tx.QueryRow(ctx, `
+UPDATE acquisition_provider_tasks
+SET provider_task_ref = $2, state = 'REFERENCE_KNOWN', updated_at = $3
+WHERE manifest_id = $1 AND state = 'START_RESERVED'
+RETURNING `+acquisitionProviderTaskColumns,
+			string(request.ManifestID), request.Reference, request.Now))
+		if errors.Is(err, pgx.ErrNoRows) {
+			return acquisition.ProviderTaskClaimResult{}, fmt.Errorf("%w: Manifest %s",
+				acquisition.ErrProviderTaskIdentityChange, request.ManifestID)
+		}
+		if err != nil {
+			return acquisition.ProviderTaskClaimResult{}, providerTaskWriteError("commit provider task reference", err)
+		}
+		return acquisition.ProviderTaskClaimResult{Task: committed, CommittedReference: true}, nil
+	default:
+		return acquisition.ProviderTaskClaimResult{}, fmt.Errorf("%w: unknown durable state",
+			acquisition.ErrInvalidProviderTask)
+	}
 }
 
 func scanAcquisitionProviderTask(row pgx.Row) (acquisition.ProviderTask, error) {
 	var task acquisition.ProviderTask
 	var manifestID, jobID, providerID string
+	var reference *string
 	err := row.Scan(
-		&manifestID, &jobID, &providerID, &task.ProviderTaskRef, &task.CreatedAt, &task.UpdatedAt,
+		&manifestID, &jobID, &providerID, &reference, &task.State, &task.CreatedAt, &task.UpdatedAt,
 	)
 	if err != nil {
 		return acquisition.ProviderTask{}, err
@@ -109,6 +181,9 @@ func scanAcquisitionProviderTask(row pgx.Row) (acquisition.ProviderTask, error) 
 	task.ManifestID = acquisition.ManifestID(manifestID)
 	task.JobID = jobs.JobID(jobID)
 	task.ProviderID = contracts.ProviderID(providerID)
+	if reference != nil {
+		task.ProviderTaskRef = *reference
+	}
 	return task, nil
 }
 
