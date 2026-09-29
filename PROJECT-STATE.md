@@ -6,7 +6,7 @@
 
 **MVP implementation — Gate 3**
 
-Gate 0, Gate 1, and Gate 2 are formally accepted and closed. Gate 3.1 through Gate 3.5 are accepted and merged. Gate 3.6 is authorized and in progress.
+Gate 0, Gate 1, and Gate 2 are formally accepted and closed. Gate 3.1 through Gate 3.6 are accepted and merged. Gate 3.7 is authorized and in progress.
 
 ## Accepted baseline
 
@@ -609,9 +609,24 @@ Explicitly deferred:
 
 ### Gate 3.6 — Concrete 115 Downloader adapter on pinned 115driver
 
-Status: **AUTHORIZED / IN PROGRESS**
+Status: **ACCEPTED**
 
-Tracking: GitHub Issue #33
+Tracking: GitHub Issue #33 / PR #34
+
+Merged:
+- squash commit `a8d9bf806bd12a8299b9974dfdcc4535be7046f6`
+
+Acceptance evidence:
+- concrete provider isolated in `internal/providers/115`;
+- `github.com/SheltonZhu/115driver` pinned to `v1.3.5`;
+- exact URI + Target.Scope(saveDirID) + info_hash mapping;
+- Source.Value is not normalized/truncated;
+- bounded exact-hash status polling;
+- 115 status 0/1/2/-1 maps to provider Pending/Running/Succeeded/Failed only;
+- cancel deletes task only with `deleteFiles=false`;
+- provider success remains distinct from Panta READY;
+- GitHub Actions run `36610303120` fully green;
+- no migration change; schema remains version 9.
 
 Scope:
 - add isolated concrete `internal/providers/115` DownloaderProvider;
@@ -634,6 +649,33 @@ Explicitly deferred:
 - live 115 credentials as a CI requirement;
 - 115 ShareProvider;
 - auth/quota/API/UI.
+
+## Current bounded task
+
+### Gate 3.7 — Atomic provider-stage outcome handoff to Manifest + Job
+
+Status: **AUTHORIZED / IN PROGRESS**
+
+Tracking: GitHub Issue #35
+
+Scope:
+- atomically persist provider-stage outcome across linked Manifest + Job;
+- keep provider in-progress as ACTIVE + RETRY_WAIT;
+- provider success becomes AWAITING_VISIBILITY + RETRY_WAIT;
+- provider failure/cancel becomes matching Manifest + Job terminal state;
+- uncertain side effect becomes Manifest + Job RECOVERY_REQUIRED;
+- same ACQUISITION Job continues into visibility/canonical stages;
+- owner/attempt/database-time lease fencing;
+- replay-safe exact outcome and fail-closed conflicting outcome.
+
+Explicitly deferred:
+- worker/claim loop;
+- polling cadence policy;
+- Source Resolver;
+- OpenList visibility verifier;
+- Mutation Hint / scoped refresh;
+- AWAITING_CANONICAL / READY;
+- API/UI.
 
 ## Planned Gate 0 task sequence
 
@@ -677,6 +719,6 @@ Until the relevant gate is accepted, do not implement:
 
 ## Next architect action
 
-Review the Gate 3.6 PR for Issue #33 against the pinned 115driver mapping, secret-safe client construction, exact URI/saveDirID/info_hash semantics, bounded status pagination, non-destructive cancellation, concrete-provider isolation, and full Gate 1/2/3.1-3.5 regression.
+Review the Gate 3.7 PR for Issue #35 against atomic Manifest+Job outcome persistence, provider-success handoff to AWAITING_VISIBILITY + RETRY_WAIT, lease fencing, replay/concurrency safety, recovery-required semantics, and full Gate 1/2/3.1-3.6 regression.
 
-Do not authorize Gate 3.7 until Gate 3.6 is accepted.
+Do not authorize Gate 3.8 until Gate 3.7 is accepted.
