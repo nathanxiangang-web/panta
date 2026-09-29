@@ -6,7 +6,7 @@
 
 **MVP implementation — Gate 2**
 
-Gate 0 and Gate 1 are formally accepted and closed. Gate 2.1 is authorized and in progress.
+Gate 0 and Gate 1 are formally accepted and closed. Gate 2.1 is accepted and merged. Gate 2.2 is authorized and in progress.
 
 ## Accepted baseline
 
@@ -276,9 +276,19 @@ Gate 1 closeout evidence:
 
 ### Gate 2.1 — Logical Catalog hierarchy read model and explicit absence semantics
 
-Status: **AUTHORIZED / IN PROGRESS**
+Status: **ACCEPTED**
 
-Tracking: GitHub Issue #17
+Tracking: GitHub Issue #17 / PR #18
+
+Merged:
+- squash commit `fe4342d2252689c665008801259fd081eaabe533`
+
+Acceptance evidence:
+- GitHub Actions run `36526195429` fully green;
+- deterministic Asset → Release → Variant → Copy hierarchy reads;
+- explicit missing-entity and ownership-mismatch semantics;
+- unresolved Copies remain outside the logical hierarchy;
+- Gate 1 controlled observation E2E remains green.
 
 Scope:
 - Catalog hierarchy reads for Asset → Release → Variant → Copy;
@@ -297,6 +307,33 @@ Explicitly deferred:
 - 115 acquisition / Mutation Hint;
 - auth/quota/share;
 - Agent.
+
+## Current bounded task
+
+### Gate 2.2 — Physical resource view with optional Catalog attachment
+
+Status: **AUTHORIZED / IN PROGRESS**
+
+Tracking: GitHub Issue #19
+
+Scope:
+- known root/path resolves through IndexCore Q5;
+- preserve zero/one/multiple matches and Q5 ambiguity;
+- optional Copy lookup by canonical physical identity;
+- explicit PHYSICAL_ONLY / UNRESOLVED_COPY / CLASSIFIED states;
+- classified lineage validation through Variant → Release → Asset;
+- IndexCore presence remains canonical and separate from Copy availability;
+- no Search dependency.
+
+Explicitly deferred:
+- unresolved Copy classification/binding writes;
+- identity creation from physical resources;
+- Agent classification;
+- Search/FTS;
+- OpenList/provider access;
+- public API/UI;
+- acquisition / Mutation Hint / scoped refresh;
+- reconciliation worker.
 
 ## Planned Gate 0 task sequence
 
@@ -340,6 +377,6 @@ Until the relevant gate is accepted, do not implement:
 
 ## Next architect action
 
-Review the Gate 2.1 PR for Issue #17 against logical hierarchy correctness, explicit absence/ownership semantics, unresolved-Copy isolation, deterministic reads, no Search dependency, and full Gate 1 regression.
+Review the Gate 2.2 PR for Issue #19 against physical-first known-path behavior, Q5 ambiguity preservation, optional Catalog attachment, classified-lineage integrity, IndexCore-presence authority, no Search dependency, and full Gate 1/2.1 regression.
 
-Do not authorize Gate 2.2 until Gate 2.1 is accepted.
+Do not authorize Gate 2.3 until Gate 2.2 is accepted.
