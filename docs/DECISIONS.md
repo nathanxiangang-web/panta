@@ -379,3 +379,26 @@ Rules:
 - uncertain external side effects must fail closed and must not be converted into blind automatic recreation.
 
 This boundary exists so crash/restart behavior cannot accidentally duplicate provider-side downloads.
+
+
+## D-024 — Provider execution is connection-scoped, not ProviderID-scoped
+
+**Status:** Accepted
+
+Provider implementation identity and authenticated provider session identity are different concerns.
+
+```text
+ProviderID     = which adapter implementation
+ConnectionID   = which StorageConnection
+CredentialRef  = which opaque secret/session reference backs that connection
+```
+
+Rules:
+- ProviderID alone must never select authenticated provider state.
+- The same ProviderID may serve multiple StorageConnections.
+- Acquisition/domain code may carry CredentialRef only as opaque metadata; secret contents remain outside product state.
+- Provider adapters must not query Panta persistence to discover credentials.
+- Secret/session resolution happens at the composition/provider-session boundary.
+- A missing or mismatched connection/credential binding fails closed before provider side effects.
+
+This decision is required before the real 115 adapter because a real downloader is authenticated, while Gate 3.4 intentionally proved only the provider-neutral side-effect mechanics.
