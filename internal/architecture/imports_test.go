@@ -66,6 +66,17 @@ func TestGateZeroDomainImportBoundaries(t *testing.T) {
 				"/internal/providers", "/providers/115", "/internal/search",
 			},
 		},
+		{
+			// The provider-session composition boundary may implement the
+			// acquisition port and use the opaque storage ConnectionID, but it must
+			// not reach persistence, provider adapters, or any integration.
+			packagePath: "github.com/nathanxiangang-web/panta/internal/providers/session",
+			forbidden: []string{
+				"github.com/jackc/pgx", "database/sql", "/providers/115",
+				"/internal/store", "/internal/integrations/indexcore", "/internal/integrations/openlist",
+				"/internal/search", "/internal/agent", "/internal/auth",
+			},
+		},
 	}
 
 	for _, test := range tests {
