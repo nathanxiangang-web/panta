@@ -11,6 +11,7 @@ import (
 
 	"github.com/nathanxiangang-web/panta/internal/catalog"
 	"github.com/nathanxiangang-web/panta/internal/jobs"
+	"github.com/nathanxiangang-web/panta/internal/providers/contracts"
 	"github.com/nathanxiangang-web/panta/internal/storage"
 )
 
@@ -22,19 +23,24 @@ const (
 )
 
 var (
-	ErrInvalidArgument          = errors.New("invalid acquisition manifest argument")
-	ErrInvalidTargetPath        = errors.New("invalid acquisition target path")
-	ErrStorageBindingNotFound   = errors.New("acquisition StorageBinding not found")
-	ErrStorageBindingDisabled   = errors.New("acquisition StorageBinding is disabled")
-	ErrAssetNotFound            = errors.New("acquisition Asset not found")
-	ErrReleaseNotFound          = errors.New("acquisition Release not found")
-	ErrVariantNotFound          = errors.New("acquisition Variant not found")
-	ErrReleaseOwnershipMismatch = errors.New("acquisition Release does not belong to Asset")
-	ErrVariantOwnershipMismatch = errors.New("acquisition Variant does not belong to Release")
-	ErrNotFound                 = errors.New("acquisition manifest not found")
-	ErrConflict                 = errors.New("acquisition manifest conflicts with existing state")
-	ErrInvalidReference         = errors.New("acquisition manifest references missing state")
-	ErrPersistence              = errors.New("acquisition manifest persistence failure")
+	ErrInvalidArgument                     = errors.New("invalid acquisition manifest argument")
+	ErrInvalidTargetPath                   = errors.New("invalid acquisition target path")
+	ErrStorageBindingNotFound              = errors.New("acquisition StorageBinding not found")
+	ErrStorageBindingDisabled              = errors.New("acquisition StorageBinding is disabled")
+	ErrStorageBindingNotAcquisitionCapable = errors.New("acquisition StorageBinding has no valid provider scope")
+	ErrStorageConnectionNotFound           = errors.New("acquisition StorageConnection not found")
+	ErrStorageConnectionDisabled           = errors.New("acquisition StorageConnection is disabled")
+	ErrStorageTopologyMismatch             = errors.New("acquisition storage topology identity mismatch")
+	ErrInvalidProviderIdentity             = errors.New("acquisition provider identity is invalid")
+	ErrAssetNotFound                       = errors.New("acquisition Asset not found")
+	ErrReleaseNotFound                     = errors.New("acquisition Release not found")
+	ErrVariantNotFound                     = errors.New("acquisition Variant not found")
+	ErrReleaseOwnershipMismatch            = errors.New("acquisition Release does not belong to Asset")
+	ErrVariantOwnershipMismatch            = errors.New("acquisition Variant does not belong to Release")
+	ErrNotFound                            = errors.New("acquisition manifest not found")
+	ErrConflict                            = errors.New("acquisition manifest conflicts with existing state")
+	ErrInvalidReference                    = errors.New("acquisition manifest references missing state")
+	ErrPersistence                         = errors.New("acquisition manifest persistence failure")
 )
 
 type ManifestID string
@@ -100,8 +106,9 @@ type ManifestRepository interface {
 	GetManifest(context.Context, ManifestID) (Manifest, error)
 }
 
-type StorageBindingReader interface {
+type StorageTopologyReader interface {
 	GetBinding(context.Context, storage.BindingID) (storage.Binding, error)
+	GetConnection(context.Context, storage.ConnectionID) (storage.Connection, error)
 }
 
 type CatalogIdentityReader interface {
@@ -124,17 +131,17 @@ func WithClock(clock Clock) Option {
 }
 
 type Service struct {
-	bindings  StorageBindingReader
+	storage   StorageTopologyReader
 	catalog   CatalogIdentityReader
 	manifests ManifestRepository
 	now       Clock
 }
 
-func NewService(bindings StorageBindingReader, identities CatalogIdentityReader, manifests ManifestRepository, options ...Option) (*Service, error) {
-	if bindings == nil || identities == nil || manifests == nil {
+func NewService(topology StorageTopologyReader, identities CatalogIdentityReader, manifests ManifestRepository, options ...Option) (*Service, error) {
+	if topology == nil || identities == nil || manifests == nil {
 		return nil, ErrInvalidArgument
 	}
-	service := &Service{bindings: bindings, catalog: identities, manifests: manifests, now: time.Now}
+	service := &Service{storage: topology, catalog: identities, manifests: manifests, now: time.Now}
 	for _, option := range options {
 		if option != nil {
 			if err := option(service); err != nil {
@@ -152,18 +159,9 @@ func (service *Service) CreateManifest(ctx context.Context, request CreateManife
 	if err != nil {
 		return Manifest{}, err
 	}
-	binding, err := service.bindings.GetBinding(ctx, request.TargetStorageBindingID)
-	if errors.Is(err, storage.ErrNotFound) {
-		return Manifest{}, fmt.Errorf("%w: %s", ErrStorageBindingNotFound, request.TargetStorageBindingID)
-	}
+	_, _, err = loadAcquisitionTopology(ctx, service.storage, request.TargetStorageBindingID)
 	if err != nil {
-		return Manifest{}, fmt.Errorf("load StorageBinding: %w", err)
-	}
-	if binding.Status != storage.BindingStatusActive {
-		return Manifest{}, fmt.Errorf("%w: %s", ErrStorageBindingDisabled, binding.ID)
-	}
-	if binding.ID != request.TargetStorageBindingID {
-		return Manifest{}, fmt.Errorf("%w: requested %s, got %s", ErrStorageBindingNotFound, request.TargetStorageBindingID, binding.ID)
+		return Manifest{}, err
 	}
 	if err := service.validateLineage(ctx, request); err != nil {
 		return Manifest{}, err
@@ -180,6 +178,45 @@ func (service *Service) CreateManifest(ctx context.Context, request CreateManife
 		return Manifest{}, fmt.Errorf("create acquisition Manifest: %w", err)
 	}
 	return manifest, nil
+}
+
+func loadAcquisitionTopology(ctx context.Context, reader StorageTopologyReader, bindingID storage.BindingID) (storage.Binding, storage.Connection, error) {
+	binding, err := reader.GetBinding(ctx, bindingID)
+	if errors.Is(err, storage.ErrNotFound) {
+		return storage.Binding{}, storage.Connection{}, fmt.Errorf("%w: %s", ErrStorageBindingNotFound, bindingID)
+	}
+	if err != nil {
+		return storage.Binding{}, storage.Connection{}, fmt.Errorf("load StorageBinding: %w", err)
+	}
+	if binding.Status != storage.BindingStatusActive {
+		return storage.Binding{}, storage.Connection{}, fmt.Errorf("%w: %s", ErrStorageBindingDisabled, binding.ID)
+	}
+	if binding.ID != bindingID {
+		return storage.Binding{}, storage.Connection{}, fmt.Errorf("%w: requested binding %s, got %s", ErrStorageTopologyMismatch, bindingID, binding.ID)
+	}
+	if binding.ProviderScope == nil || storage.ValidateProviderScope(binding.ProviderScope) != nil {
+		return storage.Binding{}, storage.Connection{}, fmt.Errorf("%w: %s", ErrStorageBindingNotAcquisitionCapable, binding.ID)
+	}
+	if binding.ConnectionID == "" {
+		return storage.Binding{}, storage.Connection{}, fmt.Errorf("%w: binding %s has no connection", ErrStorageTopologyMismatch, binding.ID)
+	}
+	connection, err := reader.GetConnection(ctx, binding.ConnectionID)
+	if errors.Is(err, storage.ErrNotFound) {
+		return storage.Binding{}, storage.Connection{}, fmt.Errorf("%w: %s", ErrStorageConnectionNotFound, binding.ConnectionID)
+	}
+	if err != nil {
+		return storage.Binding{}, storage.Connection{}, fmt.Errorf("load StorageConnection: %w", err)
+	}
+	if connection.ID != binding.ConnectionID {
+		return storage.Binding{}, storage.Connection{}, fmt.Errorf("%w: requested connection %s, got %s", ErrStorageTopologyMismatch, binding.ConnectionID, connection.ID)
+	}
+	if connection.Status != storage.ConnectionStatusActive {
+		return storage.Binding{}, storage.Connection{}, fmt.Errorf("%w: %s", ErrStorageConnectionDisabled, connection.ID)
+	}
+	if !contracts.ProviderID(connection.ProviderType).Valid() {
+		return storage.Binding{}, storage.Connection{}, fmt.Errorf("%w: connection %s", ErrInvalidProviderIdentity, connection.ID)
+	}
+	return binding, connection, nil
 }
 
 func NormalizeTargetPath(value string) (string, error) {

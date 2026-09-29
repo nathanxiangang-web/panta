@@ -49,7 +49,7 @@ func (r *Registry) Register(entry Entry) error {
 }
 
 func validateEntry(entry Entry) error {
-	if entry.Descriptor.ID == "" {
+	if !entry.Descriptor.ID.Valid() {
 		return fmt.Errorf("%w: provider id is required", ErrInvalidEntry)
 	}
 

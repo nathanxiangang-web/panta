@@ -2,6 +2,7 @@ package storage
 
 import (
 	"errors"
+	"strings"
 	"testing"
 )
 
@@ -47,5 +48,25 @@ func TestStorageStatusesAreExplicit(t *testing.T) {
 	}
 	if !BindingStatusActive.Valid() || !BindingStatusDisabled.Valid() || BindingStatus("PENDING").Valid() {
 		t.Fatal("unexpected StorageBinding status validation")
+	}
+}
+
+func TestValidateProviderScopePreservesOpaqueValues(t *testing.T) {
+	if err := ValidateProviderScope(nil); err != nil {
+		t.Fatalf("ValidateProviderScope(nil) error = %v", err)
+	}
+	value := " provider://opaque//scope?token=%2F "
+	if err := ValidateProviderScope(&value); err != nil {
+		t.Fatalf("ValidateProviderScope(valid) error = %v", err)
+	}
+	if value != " provider://opaque//scope?token=%2F " {
+		t.Fatalf("provider scope was normalized to %q", value)
+	}
+	invalidUTF8 := string([]byte{0xff})
+	for _, value := range []string{"", "   ", "scope\x00value", invalidUTF8, strings.Repeat("界", MaxProviderScopeLength+1)} {
+		candidate := value
+		if err := ValidateProviderScope(&candidate); !errors.Is(err, ErrInvalidArgument) {
+			t.Fatalf("ValidateProviderScope(%q) error = %v", value, err)
+		}
 	}
 }

@@ -3,10 +3,22 @@ package contracts_test
 import (
 	"context"
 	"errors"
+	"strings"
 	"testing"
 
 	"github.com/nathanxiangang-web/panta/internal/providers/contracts"
 )
+
+func TestProviderIDValidation(t *testing.T) {
+	if !contracts.ProviderID("provider-1").Valid() {
+		t.Fatal("valid ProviderID rejected")
+	}
+	for _, value := range []contracts.ProviderID{"", " ", " provider ", "bad\x00id", contracts.ProviderID(strings.Repeat("x", contracts.MaxProviderIDLength+1))} {
+		if value.Valid() {
+			t.Fatalf("invalid ProviderID %q accepted", value)
+		}
+	}
+}
 
 type storageDouble struct{}
 

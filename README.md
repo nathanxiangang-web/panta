@@ -179,7 +179,8 @@ external IndexCore root ID:
 
 ```text
 StorageConnection ── StorageBinding ── OpenList mount path
-                              └─────── IndexCore root_id (external identifier)
+                         ├──────────── IndexCore root_id (external identifier)
+                         └──────────── provider_scope (optional opaque target)
 ```
 
 `internal/store/postgres` implements the port. Migration
@@ -191,6 +192,12 @@ Mount paths use absolute slash form. `/` is the root; repeated and trailing
 slashes normalize away for non-root mounts. Empty, relative, backslash, `.`, and
 `..` component forms are rejected. `credential_ref` is nullable opaque metadata
 only; credentials and secrets are not stored in these rows.
+
+Gate 3.3 migration `0007_storage_binding_provider_scope.sql` adds the third,
+independent coordinate. A nullable scope keeps observation-only bindings valid;
+acquisition requires an explicit scope and never derives it from the OpenList
+mount or IndexCore root. Provider scope is bounded opaque text and is preserved
+exactly without path normalization.
 
 The module stores no physical inventory and has no IndexCore/OpenList database
 or network dependency. Real clients, Journal cursors/projectors, Copy updates,

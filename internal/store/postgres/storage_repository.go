@@ -69,15 +69,18 @@ func (repository *StorageRepository) CreateBinding(ctx context.Context, binding 
 	if err != nil {
 		return err
 	}
+	if err := storage.ValidateProviderScope(binding.ProviderScope); err != nil {
+		return err
+	}
 	if binding.ID == "" || binding.ConnectionID == "" || strings.TrimSpace(binding.IndexCoreRootID) == "" || !binding.Status.Valid() || binding.CreatedAt.IsZero() || binding.UpdatedAt.IsZero() {
 		return storage.ErrInvalidArgument
 	}
 	_, err = repository.db.Exec(ctx, `
 INSERT INTO storage_bindings (
-    storage_binding_id, storage_connection_id, openlist_mount_path,
-    indexcore_root_id, status, created_at, updated_at
-) VALUES ($1, $2, $3, $4, $5, $6, $7)`,
-		string(binding.ID), string(binding.ConnectionID), normalizedMount,
+    storage_binding_id, storage_connection_id, provider_scope,
+    openlist_mount_path, indexcore_root_id, status, created_at, updated_at
+) VALUES ($1, $2, $3, $4, $5, $6, $7, $8)`,
+		string(binding.ID), string(binding.ConnectionID), binding.ProviderScope, normalizedMount,
 		binding.IndexCoreRootID, string(binding.Status), binding.CreatedAt, binding.UpdatedAt,
 	)
 	return wrapStorageWriteError("create storage binding", err)
@@ -88,7 +91,7 @@ func (repository *StorageRepository) GetBinding(ctx context.Context, id storage.
 		return storage.Binding{}, storage.ErrInvalidArgument
 	}
 	return repository.getBinding(ctx, `
-SELECT storage_binding_id::text, storage_connection_id::text, openlist_mount_path,
+SELECT storage_binding_id::text, storage_connection_id::text, provider_scope, openlist_mount_path,
        indexcore_root_id, status, created_at, updated_at
 FROM storage_bindings
 WHERE storage_binding_id = $1`, string(id))
@@ -99,7 +102,7 @@ func (repository *StorageRepository) GetBindingByIndexCoreRootID(ctx context.Con
 		return storage.Binding{}, storage.ErrInvalidArgument
 	}
 	return repository.getBinding(ctx, `
-SELECT storage_binding_id::text, storage_connection_id::text, openlist_mount_path,
+SELECT storage_binding_id::text, storage_connection_id::text, provider_scope, openlist_mount_path,
        indexcore_root_id, status, created_at, updated_at
 FROM storage_bindings
 WHERE indexcore_root_id = $1`, rootID)
@@ -114,7 +117,7 @@ func (repository *StorageRepository) GetBindingByConnectionMount(ctx context.Con
 		return storage.Binding{}, err
 	}
 	return repository.getBinding(ctx, `
-SELECT storage_binding_id::text, storage_connection_id::text, openlist_mount_path,
+SELECT storage_binding_id::text, storage_connection_id::text, provider_scope, openlist_mount_path,
        indexcore_root_id, status, created_at, updated_at
 FROM storage_bindings
 WHERE storage_connection_id = $1 AND openlist_mount_path = $2`, string(connectionID), normalizedMount)
@@ -124,7 +127,7 @@ func (repository *StorageRepository) getBinding(ctx context.Context, query strin
 	var binding storage.Binding
 	var bindingID, connectionID string
 	err := repository.db.QueryRow(ctx, query, arguments...).Scan(
-		&bindingID, &connectionID, &binding.OpenListMountPath,
+		&bindingID, &connectionID, &binding.ProviderScope, &binding.OpenListMountPath,
 		&binding.IndexCoreRootID, &binding.Status, &binding.CreatedAt, &binding.UpdatedAt,
 	)
 	if err != nil {

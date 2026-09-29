@@ -72,6 +72,10 @@ func TestGateZeroDomainImportBoundaries(t *testing.T) {
 		t.Run(test.packagePath, func(t *testing.T) {
 			listed := goList(t, test.packagePath)
 			for _, imported := range listed.Imports {
+				if listed.ImportPath == "github.com/nathanxiangang-web/panta/internal/acquisition" &&
+					imported == "github.com/nathanxiangang-web/panta/internal/providers/contracts" {
+					continue
+				}
 				for _, forbidden := range test.forbidden {
 					if strings.Contains(imported, forbidden) {
 						t.Fatalf("%s imports forbidden dependency %s", listed.ImportPath, imported)

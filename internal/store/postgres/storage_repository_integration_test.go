@@ -2,12 +2,59 @@ package postgres
 
 import (
 	"context"
+	"database/sql"
 	"errors"
+	"strings"
 	"testing"
 	"time"
 
 	"github.com/nathanxiangang-web/panta/internal/storage"
+	"github.com/nathanxiangang-web/panta/migrations"
 )
+
+func TestPostgresProviderScopeMigrationPreservesExistingObservationBinding(t *testing.T) {
+	ctx := context.Background()
+	pool := integrationPool(t, ctx)
+	resetTestSchema(t, ctx, pool)
+	history, err := migrations.All()
+	if err != nil || len(history) != 7 {
+		t.Fatalf("migration history = %#v, %v", history, err)
+	}
+	legacy := &Migrator{pool: pool, migrations: history[:6]}
+	if _, err := legacy.Apply(ctx); err != nil {
+		t.Fatalf("apply through version 6: %v", err)
+	}
+	now := time.Date(2026, 9, 29, 18, 0, 0, 0, time.UTC)
+	connectionID := "cf000000-0000-4000-8000-000000000001"
+	bindingID := storage.BindingID("df000000-0000-4000-8000-000000000001")
+	if _, err := pool.Exec(ctx, `
+INSERT INTO storage_connections (
+    storage_connection_id, provider_type, status, created_at, updated_at
+) VALUES ($1, 'observation-provider', 'ACTIVE', $2, $2)`,
+		connectionID, now,
+	); err != nil {
+		t.Fatalf("seed version 6 observation connection: %v", err)
+	}
+	if _, err := pool.Exec(ctx, `
+INSERT INTO storage_bindings (
+    storage_binding_id, storage_connection_id, openlist_mount_path,
+    indexcore_root_id, status, created_at, updated_at
+) VALUES ($1, $2, '/legacy', 'legacy-root', 'ACTIVE', $3, $3)`,
+		string(bindingID), connectionID, now,
+	); err != nil {
+		t.Fatalf("seed version 6 observation binding: %v", err)
+	}
+	migrator, _ := NewMigrator(pool)
+	status, err := migrator.Apply(ctx)
+	if err != nil || !status.Compatible || status.CurrentVersion != 7 {
+		t.Fatalf("upgrade to version 7 = %#v, %v", status, err)
+	}
+	repository, _ := NewStorageRepository(pool)
+	binding, err := repository.GetBinding(ctx, bindingID)
+	if err != nil || binding.ProviderScope != nil || binding.OpenListMountPath != "/legacy" || binding.IndexCoreRootID != "legacy-root" {
+		t.Fatalf("legacy observation binding = %#v, %v", binding, err)
+	}
+}
 
 func TestPostgresStorageConnectionAndBindingRoundTrip(t *testing.T) {
 	ctx := context.Background()
@@ -27,8 +74,10 @@ func TestPostgresStorageConnectionAndBindingRoundTrip(t *testing.T) {
 		t.Fatalf("GetConnection() = %#v, %v", gotConnection, err)
 	}
 
+	providerScope := " provider://opaque//scope?root=%2F "
 	binding := storage.Binding{
 		ID: "d0000000-0000-4000-8000-000000000001", ConnectionID: connection.ID,
+		ProviderScope:     &providerScope,
 		OpenListMountPath: "//media///movies//", IndexCoreRootID: "root-canonical-1",
 		Status: storage.BindingStatusActive, CreatedAt: now, UpdatedAt: now,
 	}
@@ -36,7 +85,7 @@ func TestPostgresStorageConnectionAndBindingRoundTrip(t *testing.T) {
 		t.Fatalf("CreateBinding() error = %v", err)
 	}
 	gotBinding, err := repository.GetBinding(ctx, binding.ID)
-	if err != nil || gotBinding.ID != binding.ID || gotBinding.ConnectionID != connection.ID || gotBinding.OpenListMountPath != "/media/movies" || gotBinding.IndexCoreRootID != binding.IndexCoreRootID || gotBinding.Status != binding.Status {
+	if err != nil || gotBinding.ID != binding.ID || gotBinding.ConnectionID != connection.ID || gotBinding.ProviderScope == nil || *gotBinding.ProviderScope != providerScope || gotBinding.OpenListMountPath != "/media/movies" || gotBinding.IndexCoreRootID != binding.IndexCoreRootID || gotBinding.Status != binding.Status {
 		t.Fatalf("GetBinding() = %#v, %v", gotBinding, err)
 	}
 	byRoot, err := repository.GetBindingByIndexCoreRootID(ctx, binding.IndexCoreRootID)
@@ -79,6 +128,23 @@ func TestPostgresStorageBindingConstraints(t *testing.T) {
 	if err := repository.CreateBinding(ctx, first); err != nil {
 		t.Fatalf("CreateBinding(first) error = %v", err)
 	}
+	observationOnly, err := repository.GetBinding(ctx, first.ID)
+	if err != nil || observationOnly.ProviderScope != nil {
+		t.Fatalf("observation-only binding = %#v, %v", observationOnly, err)
+	}
+	invalidUTF8 := string([]byte{0xff})
+	for index, invalid := range []string{"", "   ", "scope\x00value", invalidUTF8, strings.Repeat("x", storage.MaxProviderScopeLength+1)} {
+		candidate := first
+		candidate.ID = storage.BindingID([]string{
+			"d1000000-0000-4000-8000-000000000001", "d1000000-0000-4000-8000-000000000002",
+			"d1000000-0000-4000-8000-000000000003", "d1000000-0000-4000-8000-000000000004",
+			"d1000000-0000-4000-8000-000000000005",
+		}[index])
+		candidate.ProviderScope = &invalid
+		if err := repository.CreateBinding(ctx, candidate); !errors.Is(err, storage.ErrInvalidArgument) {
+			t.Fatalf("CreateBinding(invalid provider scope %q) error = %v", invalid, err)
+		}
+	}
 	duplicateRoot := first
 	duplicateRoot.ID = "d0000000-0000-4000-8000-000000000004"
 	duplicateRoot.OpenListMountPath = "/other"
@@ -114,6 +180,25 @@ INSERT INTO storage_bindings (
 	); err == nil {
 		t.Fatal("database accepted a non-canonical mount path")
 	}
+	if _, err := repository.db.Exec(ctx, `
+INSERT INTO storage_bindings (
+    storage_binding_id, storage_connection_id, provider_scope, openlist_mount_path,
+    indexcore_root_id, status, created_at, updated_at
+) VALUES ($1, $2, '   ', '/provider-scope', $3, 'ACTIVE', $4, $4)`,
+		"d0000000-0000-4000-8000-000000000007", string(connection.ID), "root-provider-scope-invalid", now,
+	); err == nil {
+		t.Fatal("database accepted whitespace-only provider_scope")
+	}
+	var defaultValue sql.NullString
+	if err := repository.db.QueryRow(ctx, `
+SELECT column_default
+FROM information_schema.columns
+WHERE table_schema = 'public' AND table_name = 'storage_bindings' AND column_name = 'provider_scope'`).Scan(&defaultValue); err != nil {
+		t.Fatalf("inspect provider_scope default: %v", err)
+	}
+	if defaultValue.Valid {
+		t.Fatalf("provider_scope has database default %q", defaultValue.String)
+	}
 }
 
 func TestPostgresStorageBindingHasOnlyProductConnectionForeignKey(t *testing.T) {
@@ -147,7 +232,7 @@ func migratedStorageRepository(t *testing.T, ctx context.Context) *StorageReposi
 	if err != nil {
 		t.Fatalf("Apply() error = %v", err)
 	}
-	if !status.Compatible || status.CurrentVersion != 6 || status.LatestVersion != 6 || len(status.Applied) != 6 {
+	if !status.Compatible || status.CurrentVersion != 7 || status.LatestVersion != 7 || len(status.Applied) != 7 {
 		t.Fatalf("migration status = %#v", status)
 	}
 	repository, err := NewStorageRepository(pool)

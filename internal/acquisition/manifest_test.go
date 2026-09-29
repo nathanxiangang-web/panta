@@ -86,6 +86,36 @@ func TestCreateManifestRequiresActiveStorageBinding(t *testing.T) {
 	}
 }
 
+func TestCreateManifestRequiresAcquisitionCapableStorageTopology(t *testing.T) {
+	service, topology, _, manifests := manifestService(t)
+	request := validManifestRequest()
+	binding := topology.values[request.TargetStorageBindingID]
+	binding.ProviderScope = nil
+	topology.values[request.TargetStorageBindingID] = binding
+	if _, err := service.CreateManifest(context.Background(), request); !errors.Is(err, acquisition.ErrStorageBindingNotAcquisitionCapable) {
+		t.Fatalf("observation-only binding error = %v", err)
+	}
+
+	scope := "opaque-provider-scope"
+	binding.ProviderScope = &scope
+	topology.values[request.TargetStorageBindingID] = binding
+	connection := topology.connections[binding.ConnectionID]
+	connection.Status = storage.ConnectionStatusDisabled
+	topology.connections[binding.ConnectionID] = connection
+	if _, err := service.CreateManifest(context.Background(), request); !errors.Is(err, acquisition.ErrStorageConnectionDisabled) {
+		t.Fatalf("disabled connection error = %v", err)
+	}
+	if manifests.calls != 0 {
+		t.Fatalf("invalid acquisition topology reached persistence %d times", manifests.calls)
+	}
+	connection.Status = storage.ConnectionStatusActive
+	topology.connections[binding.ConnectionID] = connection
+	created, err := service.CreateManifest(context.Background(), request)
+	if err != nil || created.TargetStorageBindingID != binding.ID || manifests.calls != 1 {
+		t.Fatalf("active acquisition topology result = %#v, %v; persistence calls=%d", created, err, manifests.calls)
+	}
+}
+
 func TestCreateManifestAllowsOptionalAndValidatedLogicalIdentity(t *testing.T) {
 	service, _, identities, manifests := manifestService(t)
 	request := validManifestRequest()
@@ -209,13 +239,22 @@ func TestCreateManifestReportsMissingLogicalIdentity(t *testing.T) {
 }
 
 type bindingReader struct {
-	values map[storage.BindingID]storage.Binding
+	values      map[storage.BindingID]storage.Binding
+	connections map[storage.ConnectionID]storage.Connection
 }
 
 func (reader *bindingReader) GetBinding(_ context.Context, id storage.BindingID) (storage.Binding, error) {
 	value, ok := reader.values[id]
 	if !ok {
 		return storage.Binding{}, storage.ErrNotFound
+	}
+	return value, nil
+}
+
+func (reader *bindingReader) GetConnection(_ context.Context, id storage.ConnectionID) (storage.Connection, error) {
+	value, ok := reader.connections[id]
+	if !ok {
+		return storage.Connection{}, storage.ErrNotFound
 	}
 	return value, nil
 }
@@ -278,8 +317,12 @@ func (repository *manifestRepository) GetManifest(_ context.Context, id acquisit
 func manifestService(t *testing.T) (*acquisition.Service, *bindingReader, *identityReader, *manifestRepository) {
 	t.Helper()
 	bindingID := storage.BindingID("binding-a")
+	connectionID := storage.ConnectionID("connection-a")
+	providerScope := "opaque-provider-scope"
 	bindings := &bindingReader{values: map[storage.BindingID]storage.Binding{
-		bindingID: {ID: bindingID, Status: storage.BindingStatusActive},
+		bindingID: {ID: bindingID, ConnectionID: connectionID, ProviderScope: &providerScope, Status: storage.BindingStatusActive},
+	}, connections: map[storage.ConnectionID]storage.Connection{
+		connectionID: {ID: connectionID, ProviderType: "provider-a", Status: storage.ConnectionStatusActive},
 	}}
 	identities := &identityReader{
 		assets:   map[catalog.AssetID]catalog.Asset{"asset-a": {ID: "asset-a"}},

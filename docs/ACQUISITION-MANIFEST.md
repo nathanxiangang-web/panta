@@ -22,10 +22,13 @@ validated acquisition request
 - `internal/acquisition` owns the Manifest model, closed milestone states,
   target-path normalization, creation service, and persistence port.
 - The creation service reads only Panta-owned StorageBinding and Catalog identity
-  ports. It does not create Storage or Catalog identity.
+  ports. It does not create Storage or Catalog identity. New acquisition intent
+  requires an ACTIVE binding with explicit provider scope and an ACTIVE owning
+  StorageConnection.
 - `internal/store/postgres` implements Manifest persistence.
 - `internal/acquisition` may depend on the Panta-owned, provider-neutral Jobs
-  contract for activation. It still cannot depend on Job persistence details.
+  contract for activation and provider contract DTOs for execution input. It
+  still cannot depend on Job persistence, provider registry, or adapters.
 - Jobs continue to own execution, claim, lease, retry, and recovery behavior.
   The Manifest owns intent, target, optional logical association, and a coarse
   product milestone only.
@@ -41,7 +44,9 @@ is stored as opaque input: Gate 3.1 does not parse URLs, magnets, or provider
 syntax.
 
 The target identifies a location inside an ACTIVE StorageBinding. It is distinct
-from the binding's OpenList mount path. Target paths:
+from the binding's OpenList mount path. The binding must explicitly configure an
+opaque provider scope and its owning connection must be ACTIVE with a valid
+provider identity. Target paths:
 
 - are absolute slash paths;
 - reject backslashes and `.` / `..` components;
@@ -91,9 +96,31 @@ mismatched linkage fails closed. All other Manifest milestones reject activation
 Row locking makes same-ID and different-ID concurrent requests converge on the
 single committed link without an orphan Job.
 
+## Side-effect-free execution input
+
+Gate 3.3 resolves only an `ACTIVE` Manifest with a durable Job link. It reads the
+explicit StorageBinding and StorageConnection and assembles:
+
+```text
+ProviderID       = connection.provider_type
+CredentialRef    = connection.credential_ref (opaque reference only)
+Source.Scheme    = manifest.source_type
+Source.Value     = manifest.source_ref
+Target.Scope     = binding.provider_scope
+Target.Path      = manifest.target_path
+```
+
+The resolver preserves source reference and provider scope exactly. It does not
+derive scope from `openlist_mount_path` or `indexcore_root_id`, load credentials,
+query the provider registry, invoke a DownloaderProvider, or perform network IO.
+Migration `0007_storage_binding_provider_scope.sql` leaves provider scope nullable
+for observation-only bindings, has no default, and rejects empty or overlong
+non-null values.
+
 ## Deferred capabilities
 
-Provider task references, Source Resolver/provider syntax, Job worker execution,
-115, OpenList visibility verification, Mutation
+Provider task references, Source Resolver/provider syntax normalization, Job
+worker execution, provider registry selection, DownloaderProvider calls, 115,
+OpenList visibility verification, Mutation
 Hint/scoped refresh, canonical READY orchestration, auth/quota, and API/UI are
 separately authorized later work.
