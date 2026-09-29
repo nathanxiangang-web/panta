@@ -219,6 +219,15 @@ closed. `contracts.SecretResolver` freezes the opaque secret lookup port with no
 real backend yet; secret contents never enter the Manifest, Job payload, or
 provider-task tables.
 
+Gate 3.6 adds the first concrete provider: `internal/providers/115` implements
+`contracts.DownloaderProvider` on the pinned `github.com/SheltonZhu/115driver`
+`v1.3.5`, mapping Panta's `Source.Value` to the exact 115 offline URI and
+`Target.Scope` to the 115 destination directory ID. `Target.Path` is Panta's
+observation path only and is never translated into provider scope. The adapter is
+provider-isolated: it imports only `internal/providers/contracts`, the pinned
+upstream driver package, and the standard library, so no 115 type reaches the
+acquisition domain.
+
 The module stores no physical inventory and has no IndexCore/OpenList database
 or network dependency. Real clients, Journal cursors/projectors, Copy updates,
 visibility checks, Mutation Hints, and provider-specific behavior remain outside
