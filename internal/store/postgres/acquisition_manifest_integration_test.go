@@ -63,7 +63,7 @@ func TestPostgresAcquisitionManifestRoundTripAndConstraints(t *testing.T) {
 	}
 	userID := acquisition.UserID("23000000-0000-4000-8000-000000000050")
 	expectedName := "package.iso"
-	jobID := acquisition.JobID(job.ID)
+	jobID := job.ID
 	full := acquisition.Manifest{
 		ID: "23000000-0000-4000-8000-000000000060", UserID: &userID,
 		SourceType: "opaque-source", SourceRef: "opaque://provider-owned-value", ExpectedName: &expectedName,
@@ -122,7 +122,7 @@ func TestPostgresAcquisitionManifestRoundTripAndConstraints(t *testing.T) {
 			value.VariantID, value.JobID = &missing, nil
 		}},
 		{name: "Job", mutate: func(value *acquisition.Manifest) {
-			missing := acquisition.JobID("23000000-0000-4000-8000-000000000094")
+			missing := jobs.JobID("23000000-0000-4000-8000-000000000094")
 			value.JobID = &missing
 		}},
 	}

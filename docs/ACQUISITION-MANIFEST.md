@@ -1,7 +1,8 @@
 # Acquisition Manifest
 
 Gate 3.1 introduces durable, provider-neutral acquisition intent before any
-provider side effect exists.
+provider side effect exists. Gate 3.2 adds the atomic boundary that makes that
+intent executable.
 
 ```text
 validated acquisition request
@@ -10,7 +11,7 @@ validated acquisition request
   PENDING Acquisition Manifest
              |
              v
-       later Gate: Job
+  atomic ACTIVE + Job link
              |
              v
        later Gate: provider
@@ -23,13 +24,15 @@ validated acquisition request
 - The creation service reads only Panta-owned StorageBinding and Catalog identity
   ports. It does not create Storage or Catalog identity.
 - `internal/store/postgres` implements Manifest persistence.
+- `internal/acquisition` may depend on the Panta-owned, provider-neutral Jobs
+  contract for activation. It still cannot depend on Job persistence details.
 - Jobs continue to own execution, claim, lease, retry, and recovery behavior.
   The Manifest owns intent, target, optional logical association, and a coarse
   product milestone only.
 
 The acquisition domain cannot import pgx/database/sql, provider execution,
-OpenList, IndexCore, Jobs, Search, Agent, or authentication implementations.
-Gate 3.1 performs no network call and no provider operation.
+OpenList, IndexCore, Search, Agent, or authentication implementations. Neither
+Manifest creation nor activation performs a network call or provider operation.
 
 ## Intent validation
 
@@ -65,11 +68,29 @@ default.
 
 New Manifests are always created in `PENDING`. The frozen state set also reserves
 `ACTIVE`, `AWAITING_VISIBILITY`, `AWAITING_CANONICAL`, `READY`, `FAILED`,
-`RECOVERY_REQUIRED`, and `CANCELED`, but Gate 3.1 implements no transitions.
+`RECOVERY_REQUIRED`, and `CANCELED`.
+
+## Atomic activation
+
+Only a `PENDING` Manifest with no Job link can newly activate. One PostgreSQL
+transaction locks the Manifest, creates a generic `QUEUED` Job of type
+`ACQUISITION`, links `job_id`, and changes the Manifest to `ACTIVE`. Both records
+commit or neither does.
+
+The Job uses application-supplied identity, a positive `max_attempts`, and the
+deterministic idempotency key `acquisition:<manifest_id>`. Its versioned payload
+contains exactly `schema_version=1` and `manifest_id`; source references, target
+paths, credentials, and provider data remain exclusively in their owning model.
+
+An `ACTIVE` replay returns the linked durable Job with `Changed=false`, even if
+the retry proposes another Job ID. It does not rewrite timestamps. Missing or
+mismatched linkage fails closed. All other Manifest milestones reject activation.
+Row locking makes same-ID and different-ID concurrent requests converge on the
+single committed link without an orphan Job.
 
 ## Deferred capabilities
 
-Provider task references, Source Resolver/provider syntax, durable Job
-submission, worker execution, 115, OpenList visibility verification, Mutation
+Provider task references, Source Resolver/provider syntax, Job worker execution,
+115, OpenList visibility verification, Mutation
 Hint/scoped refresh, canonical READY orchestration, auth/quota, and API/UI are
 separately authorized later work.

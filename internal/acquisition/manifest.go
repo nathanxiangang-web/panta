@@ -10,6 +10,7 @@ import (
 	"unicode/utf8"
 
 	"github.com/nathanxiangang-web/panta/internal/catalog"
+	"github.com/nathanxiangang-web/panta/internal/jobs"
 	"github.com/nathanxiangang-web/panta/internal/storage"
 )
 
@@ -38,7 +39,7 @@ var (
 
 type ManifestID string
 type UserID string
-type JobID string
+type JobID = jobs.JobID
 type State string
 
 const (
@@ -75,7 +76,7 @@ type Manifest struct {
 	AssetID                *catalog.AssetID
 	ReleaseID              *catalog.ReleaseID
 	VariantID              *catalog.VariantID
-	JobID                  *JobID
+	JobID                  *jobs.JobID
 	State                  State
 	CreatedAt              time.Time
 	UpdatedAt              time.Time
@@ -92,7 +93,7 @@ type CreateManifestRequest struct {
 	AssetID                *catalog.AssetID
 	ReleaseID              *catalog.ReleaseID
 	VariantID              *catalog.VariantID
-	JobID                  *JobID
+	JobID                  *jobs.JobID
 }
 
 type ManifestRepository interface {

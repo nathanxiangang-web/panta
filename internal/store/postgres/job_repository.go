@@ -42,6 +42,16 @@ func NewJobRepository(pool *pgxpool.Pool) (*JobRepository, error) {
 }
 
 func (repository *JobRepository) Create(ctx context.Context, request jobs.CreateRequest) (jobs.Job, error) {
+	return insertJob(ctx, repository.pool, request)
+}
+
+type jobQueryRow interface {
+	QueryRow(context.Context, string, ...any) pgx.Row
+}
+
+// insertJob is shared by the standalone Job repository and transactions that
+// atomically create a Job with another Panta-owned aggregate.
+func insertJob(ctx context.Context, db jobQueryRow, request jobs.CreateRequest) (jobs.Job, error) {
 	if request.ID == "" || strings.TrimSpace(request.Type) == "" || request.MaxAttempts < 1 || !json.Valid(request.Payload) {
 		return jobs.Job{}, jobs.ErrInvalidArgument
 	}
@@ -49,7 +59,7 @@ func (repository *JobRepository) Create(ctx context.Context, request jobs.Create
 		return jobs.Job{}, jobs.ErrInvalidArgument
 	}
 
-	row := repository.pool.QueryRow(ctx, `
+	row := db.QueryRow(ctx, `
 INSERT INTO jobs (
     job_id, job_type, payload, state, idempotency_key,
     attempt_count, max_attempts, created_at, updated_at
@@ -232,7 +242,11 @@ WHERE job.job_id = expired.job_id`, request.Now, request.Limit, expiredLeaseMess
 }
 
 func (repository *JobRepository) getOne(ctx context.Context, query string, argument any) (jobs.Job, error) {
-	job, err := scanJob(repository.pool.QueryRow(ctx, query, argument))
+	return getOneJob(ctx, repository.pool, query, argument)
+}
+
+func getOneJob(ctx context.Context, db jobQueryRow, query string, argument any) (jobs.Job, error) {
+	job, err := scanJob(db.QueryRow(ctx, query, argument))
 	if errors.Is(err, pgx.ErrNoRows) {
 		return jobs.Job{}, jobs.ErrNotFound
 	}
