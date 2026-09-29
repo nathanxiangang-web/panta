@@ -54,17 +54,14 @@ type JobReader interface {
 }
 
 // ProviderCatalog is the narrow read port this service needs from the provider
-// registry. Package registry.Registry satisfies it directly, which keeps this
-// package free of any dependency on the registry or adapters.
+// registry: resolve one provider identity to its downloader-capable registration.
+//
+// Both sides depend only on the provider-neutral contracts package. The real
+// registry.Registry satisfies this interface directly through its
+// LookupDownloader method - there is no adapter and no duplicated result type -
+// and registry asserts that wiring at compile time.
 type ProviderCatalog interface {
-	Lookup(contracts.ProviderID) (DownloaderBinding, error)
-}
-
-// DownloaderBinding is the provider-neutral projection of one registered
-// provider: its descriptor identity plus its Downloader port when implemented.
-type DownloaderBinding struct {
-	Descriptor contracts.Descriptor
-	Downloader contracts.DownloaderProvider
+	LookupDownloader(contracts.ProviderID) (contracts.DownloaderBinding, error)
 }
 
 // ExecutionOption configures the execution step service.
@@ -245,7 +242,7 @@ func (service *ExecutionStepService) resolveDownloader(providerID contracts.Prov
 	if !providerID.Valid() {
 		return nil, fmt.Errorf("%w: %q", ErrProviderIdentityMismatch, providerID)
 	}
-	binding, err := service.providers.Lookup(providerID)
+	binding, err := service.providers.LookupDownloader(providerID)
 	if err != nil {
 		return nil, fmt.Errorf("%w: %s: %v", ErrProviderNotRegistered, providerID, err)
 	}

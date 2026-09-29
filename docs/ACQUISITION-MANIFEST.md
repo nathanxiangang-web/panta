@@ -33,6 +33,25 @@ validated acquisition request
   The Manifest owns intent, target, optional logical association, and a coarse
   product milestone only.
 
+The execution step's provider port is `ProviderCatalog`, which resolves one
+provider identity to `contracts.DownloaderBinding`. That result type lives in
+`internal/providers/contracts`, not in the registry, so the registry and the
+acquisition domain both depend only on the provider-neutral contract:
+
+```text
+contracts
+    ^
+    |
+acquisition     registry
+```
+
+`registry.Registry` satisfies `acquisition.ProviderCatalog` directly through its
+`LookupDownloader` method, with no composition adapter, and
+`internal/providers/registry/composition_test.go` asserts that wiring at compile
+time. A registry-local projection type would satisfy Go's assignability rules in
+isolation and still fail to wire the real registry, so the assertion is the
+contract, not a convenience.
+
 The acquisition domain cannot import pgx/database/sql, provider execution,
 OpenList, IndexCore, Search, Agent, or authentication implementations. Neither
 Manifest creation nor activation performs a network call or provider operation.

@@ -227,18 +227,29 @@ func (provider *scriptedProvider) counts() (start int, status int, refs []string
 }
 
 // catalogDouble resolves provider identities from an explicit map so registry
-// problems can be injected independently of the real registry.
+// problems can be injected independently of the real registry. It intentionally
+// implements the exact same port the real registry satisfies, which is asserted at
+// compile time in internal/providers/registry.
 type catalogDouble struct {
-	providers map[contracts.ProviderID]acquisition.DownloaderBinding
+	providers map[contracts.ProviderID]contracts.DownloaderBinding
 }
 
-func (catalog *catalogDouble) Lookup(id contracts.ProviderID) (acquisition.DownloaderBinding, error) {
+func (catalog *catalogDouble) LookupDownloader(id contracts.ProviderID) (contracts.DownloaderBinding, error) {
 	binding, exists := catalog.providers[id]
 	if !exists {
-		return acquisition.DownloaderBinding{}, errors.New("provider not found")
+		return contracts.DownloaderBinding{}, errors.New("provider not found")
 	}
 	return binding, nil
 }
+
+// The doubles below must satisfy the same ports the real implementations do.
+var (
+	_ acquisition.ProviderCatalog       = (*catalogDouble)(nil)
+	_ acquisition.JobReader             = (*jobReaderDouble)(nil)
+	_ acquisition.ManifestReader        = (*manifestReaderDouble)(nil)
+	_ acquisition.StorageTopologyReader = (*topologyDouble)(nil)
+	_ acquisition.ProviderTaskStore     = (*taskStoreDouble)(nil)
+)
 
 // ---------------------------------------------------------------------------
 // fixtures
@@ -329,7 +340,7 @@ func newExecutionFixture(t *testing.T) *executionFixture {
 	jobsvc := &jobReaderDouble{values: map[jobs.JobID]jobs.Job{executionJobID: executionJob()}}
 	tasks := newTaskStoreDouble()
 	provider := newScriptedProvider(executionProviderID)
-	catalog := &catalogDouble{providers: map[contracts.ProviderID]acquisition.DownloaderBinding{
+	catalog := &catalogDouble{providers: map[contracts.ProviderID]contracts.DownloaderBinding{
 		executionProviderID: {Descriptor: provider.Descriptor(), Downloader: provider},
 	}}
 
@@ -571,7 +582,7 @@ func TestExecutionStepRejectsMissingJobOrManifest(t *testing.T) {
 
 func TestExecutionStepRejectsUnregisteredProvider(t *testing.T) {
 	fixture := newExecutionFixture(t)
-	fixture.catalog.providers = map[contracts.ProviderID]acquisition.DownloaderBinding{}
+	fixture.catalog.providers = map[contracts.ProviderID]contracts.DownloaderBinding{}
 
 	if _, err := fixture.service.Execute(context.Background(), fixture.request); !errors.Is(err, acquisition.ErrProviderNotRegistered) {
 		t.Fatalf("Execute() error = %v, want ErrProviderNotRegistered", err)
@@ -586,7 +597,7 @@ func TestExecutionStepRejectsProviderWithoutDownloaderCapability(t *testing.T) {
 	storageOnly := contracts.Descriptor{
 		ID: executionProviderID, DisplayName: "storage only", Capabilities: contracts.CapabilitySet{Storage: true},
 	}
-	fixture.catalog.providers[executionProviderID] = acquisition.DownloaderBinding{Descriptor: storageOnly}
+	fixture.catalog.providers[executionProviderID] = contracts.DownloaderBinding{Descriptor: storageOnly}
 
 	if _, err := fixture.service.Execute(context.Background(), fixture.request); !errors.Is(err, acquisition.ErrProviderNotDownloader) {
 		t.Fatalf("Execute() error = %v, want ErrProviderNotDownloader", err)
@@ -599,7 +610,7 @@ func TestExecutionStepRejectsProviderWithoutDownloaderCapability(t *testing.T) {
 func TestExecutionStepRejectsDescriptorIdentityMismatch(t *testing.T) {
 	fixture := newExecutionFixture(t)
 	mismatched := newScriptedProvider("other-provider")
-	fixture.catalog.providers[executionProviderID] = acquisition.DownloaderBinding{
+	fixture.catalog.providers[executionProviderID] = contracts.DownloaderBinding{
 		Descriptor: mismatched.Descriptor(), Downloader: mismatched,
 	}
 
@@ -1106,7 +1117,7 @@ func TestExecutionStepRestartWithFreshProviderPollsStoredReference(t *testing.T)
 	if err != nil {
 		t.Fatalf("NewExecutionInputResolver() error = %v", err)
 	}
-	startupCatalog := &catalogDouble{providers: map[contracts.ProviderID]acquisition.DownloaderBinding{
+	startupCatalog := &catalogDouble{providers: map[contracts.ProviderID]contracts.DownloaderBinding{
 		executionProviderID: {Descriptor: startupProvider.Descriptor(), Downloader: startupProvider},
 	}}
 	startup := newExecutionService(t, resolver, manifests, jobsvc, startupCatalog, tasks)
@@ -1124,7 +1135,7 @@ func TestExecutionStepRestartWithFreshProviderPollsStoredReference(t *testing.T)
 	// Restart: a brand-new provider that only knows the durable reference.
 	restartedProvider := newScriptedProvider(executionProviderID)
 	restartedProvider.adoptTask(stored.ProviderTaskRef, contracts.TaskStateSucceeded)
-	restartedCatalog := &catalogDouble{providers: map[contracts.ProviderID]acquisition.DownloaderBinding{
+	restartedCatalog := &catalogDouble{providers: map[contracts.ProviderID]contracts.DownloaderBinding{
 		executionProviderID: {Descriptor: restartedProvider.Descriptor(), Downloader: restartedProvider},
 	}}
 	restarted := newExecutionService(t, resolver, manifests, jobsvc, restartedCatalog, tasks)

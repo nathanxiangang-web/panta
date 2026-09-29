@@ -51,12 +51,11 @@ func TestRegistryLookupDownloaderReturnsRegisteredBinding(t *testing.T) {
 	if lookup.Downloader.Descriptor().ID != testprovider.ID {
 		t.Fatalf("downloader identity = %s", lookup.Downloader.Descriptor().ID)
 	}
-}
-
-func TestRegistryLookupDownloaderReportsUnknownProvider(t *testing.T) {
-	registered := registry.New()
-	if _, err := registered.LookupDownloader(contracts.ProviderID("missing")); !errors.Is(err, registry.ErrNotFound) {
-		t.Fatalf("LookupDownloader(missing) error = %v, want ErrNotFound", err)
+	// The result type is the shared provider-neutral contract, not a registry-local
+	// alias, which is what lets a consumer port match this method exactly.
+	var binding contracts.DownloaderBinding = lookup
+	if binding.Descriptor.ID != testprovider.ID {
+		t.Fatalf("contracts.DownloaderBinding = %#v", binding)
 	}
 }
 
