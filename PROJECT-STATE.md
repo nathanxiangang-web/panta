@@ -4,9 +4,9 @@
 
 ## Current phase
 
-**MVP implementation — Gate 1**
+**MVP implementation — Gate 2**
 
-Gate 0 is formally accepted and closed. Gate 1.1, Gate 1.2, and Gate 1.3 are accepted and merged. Gate 1.4 is authorized and in progress.
+Gate 0 and Gate 1 are formally accepted and closed. Gate 2.1 is authorized and in progress.
 
 ## Accepted baseline
 
@@ -235,9 +235,12 @@ Explicitly deferred:
 
 ### Gate 1.4 — Controlled OpenList → IndexCore → Panta observation E2E and Gate 1 closeout
 
-Status: **AUTHORIZED / IN PROGRESS**
+Status: **ACCEPTED**
 
-Tracking: GitHub Issue #15
+Tracking: GitHub Issue #15 / PR #16
+
+Merged:
+- squash commit `607debaacc417ac6a71bf7f72c12676b1a3c47ce`
 
 Pinned external integration:
 - IndexCore v0.4.0-alpha.1
@@ -260,6 +263,41 @@ Explicitly deferred:
 - 115/MCP/acquisition;
 - classification/search/auth/share/agent/API/UI.
 
+Gate 1 closeout evidence:
+- PR #16 architect review: ACCEPTED;
+- GitHub Actions run `36518514268` fully green;
+- PostgreSQL 18 controlled OpenList observation E2E passed;
+- pinned IndexCore commit `6f0eec85c59bd8cbe55011b0d9e512e0cafd6615`;
+- initial observation, identical NOOP repeat, and additive change all passed;
+- direct Q5 known-path flow requires no Search;
+- IndexCore and Panta databases remain separate.
+
+## Current bounded task
+
+### Gate 2.1 — Logical Catalog hierarchy read model and explicit absence semantics
+
+Status: **AUTHORIZED / IN PROGRESS**
+
+Tracking: GitHub Issue #17
+
+Scope:
+- Catalog hierarchy reads for Asset → Release → Variant → Copy;
+- deterministic child listing;
+- resourceview logical composition service;
+- explicit Asset/Release/Variant absence and ownership mismatch semantics;
+- derived PRESENT-Copy availability;
+- unresolved Copy remains unresolved and outside logical hierarchy;
+- no Search dependency.
+
+Explicitly deferred:
+- unresolved Copy classification/binding writes;
+- IndexCore Q3 physical enrichment;
+- Search/FTS;
+- public API/UI;
+- 115 acquisition / Mutation Hint;
+- auth/quota/share;
+- Agent.
+
 ## Planned Gate 0 task sequence
 
 - Gate 0.1 — Skeleton + first ports — **ACCEPTED**
@@ -274,13 +312,13 @@ The sequence may be refined by an architect decision, but later tasks must not b
 - Gate 1.1 — StorageConnection / StorageBinding persistence — **ACCEPTED**
 - Gate 1.2 — Typed IndexCore HTTP read client (Q4/Q5/Q8/Q9) — **ACCEPTED**
 - Gate 1.3 — Journal cursor persistence + idempotent unresolved Copy projector — **ACCEPTED**
-- Gate 1.4 — Controlled OpenList → IndexCore → Panta observation integration + Gate 1 closeout — **IN PROGRESS**
+- Gate 1.4 — Controlled OpenList → IndexCore → Panta observation integration + Gate 1 closeout — **ACCEPTED**
 
 ## Planned project sequence
 
 - Gate 0 — Skeleton & contracts — **ACCEPTED**
-- Gate 1 — Observation plane: OpenList → IndexCore → Catalog — **IN PROGRESS**
-- Gate 2 — Resource semantics & direct-path/catalog read flows
+- Gate 1 — Observation plane: OpenList → IndexCore → Catalog — **ACCEPTED / CLOSED**
+- Gate 2 — Resource semantics & direct-path/catalog read flows — **IN PROGRESS**
 - Gate 3 — 115 acquisition + fast IndexCore synchronization
 - Gate 4 — Login + share/access + usage accounting
 - Gate 5 — Constrained CodeArts agent integration
@@ -302,6 +340,6 @@ Until the relevant gate is accepted, do not implement:
 
 ## Next architect action
 
-Review the Gate 1.4 PR for Issue #15 against the controlled real OpenList → IndexCore → Panta chain, pinned external version, direct-path/no-search acceptance, idempotent replay, database separation and green GitHub E2E CI.
+Review the Gate 2.1 PR for Issue #17 against logical hierarchy correctness, explicit absence/ownership semantics, unresolved-Copy isolation, deterministic reads, no Search dependency, and full Gate 1 regression.
 
-Do not authorize Gate 2 until Gate 1.4 is accepted and Gate 1 is formally closed.
+Do not authorize Gate 2.2 until Gate 2.1 is accepted.
