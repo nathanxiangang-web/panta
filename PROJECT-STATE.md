@@ -6,7 +6,7 @@
 
 **MVP implementation — Gate 3**
 
-Gate 0, Gate 1, and Gate 2 are formally accepted and closed. Gate 3.1, Gate 3.2, and Gate 3.3 are accepted and merged. Gate 3.4 is authorized and in progress.
+Gate 0, Gate 1, and Gate 2 are formally accepted and closed. Gate 3.1 through Gate 3.4 are accepted and merged. Gate 3.5 is authorized and in progress.
 
 ## Accepted baseline
 
@@ -524,9 +524,24 @@ Explicitly deferred:
 
 ### Gate 3.4 — Durable provider-task linkage and restart-safe downloader execution step
 
-Status: **AUTHORIZED / IN PROGRESS**
+Status: **ACCEPTED**
 
-Tracking: GitHub Issue #29
+Tracking: GitHub Issue #29 / PR #30
+
+Merged:
+- squash commit `1f99a6e2123e48be28ea387d2fe4fc69cf8e14f7`
+
+Acceptance evidence:
+- provider-task linkage is durable and provider-neutral;
+- START_RESERVED side-effect fence is persisted before StartDownload;
+- retry/restart/concurrent execution cannot create a second provider task;
+- REFERENCE_KNOWN replay polls the exact durable reference;
+- provider task lifecycle remains provider-owned;
+- provider success is not READY;
+- real registry.Registry satisfies the acquisition provider lookup contract;
+- real registry + testprovider + ExecutionStepService composition is proven;
+- GitHub Actions run `36606009751` fully green;
+- migration history compatible at version 9.
 
 Scope:
 - durable provider-neutral provider-task linkage;
@@ -543,6 +558,34 @@ Explicitly deferred:
 - Source Resolver / magnet normalization;
 - worker polling loop;
 - Manifest transition to AWAITING_VISIBILITY;
+- OpenList visibility verifier;
+- Mutation Hint / scoped refresh;
+- canonical confirmation / READY;
+- auth/quota/API/UI.
+
+## Current bounded task
+
+### Gate 3.5 — Connection-scoped downloader session and credential boundary
+
+Status: **AUTHORIZED / IN PROGRESS**
+
+Tracking: GitHub Issue #31
+
+Scope:
+- distinguish ProviderID from StorageConnection session identity;
+- resolve downloader by ProviderID + ConnectionID + opaque CredentialRef;
+- allow multiple StorageConnections for the same provider implementation;
+- fail closed on connection/credential mismatch;
+- keep secret contents outside Manifest/Job/provider-task persistence;
+- freeze a narrow secret-resolution port for later concrete provider composition;
+- preserve all Gate 3.4 side-effect fencing semantics.
+
+Explicitly deferred:
+- real 115 adapter / 115driver dependency;
+- real secret backend;
+- Source Resolver normalization;
+- worker loop;
+- AWAITING_VISIBILITY transition;
 - OpenList visibility verifier;
 - Mutation Hint / scoped refresh;
 - canonical confirmation / READY;
@@ -590,6 +633,6 @@ Until the relevant gate is accepted, do not implement:
 
 ## Next architect action
 
-Review the Gate 3.4 PR for Issue #29 against durable provider-task linkage, no-recreate replay semantics, provider-neutral status mapping, uncertainty fail-closed behavior, restart safety, and full Gate 1/2/3.1/3.2/3.3 regression.
+Review the Gate 3.5 PR for Issue #31 against connection-scoped downloader resolution, exact ProviderID/ConnectionID/CredentialRef matching, secret non-persistence, multiple-connection behavior, and full Gate 1/2/3.1-3.4 regression.
 
-Do not authorize Gate 3.5 until Gate 3.4 is accepted.
+Do not authorize Gate 3.6 until Gate 3.5 is accepted.
