@@ -13,9 +13,87 @@ import (
 )
 
 type catalogDB interface {
+	Begin(context.Context) (pgx.Tx, error)
 	Exec(context.Context, string, ...any) (pgconn.CommandTag, error)
 	QueryRow(context.Context, string, ...any) pgx.Row
 	Query(context.Context, string, ...any) (pgx.Rows, error)
+}
+
+// BindCopyToVariant atomically performs the only default classification
+// transition: an existing Copy's NULL variant_id becomes one existing Variant.
+// The row lock serializes same- and different-target competitors.
+func (repository *CatalogRepository) BindCopyToVariant(ctx context.Context, copyID catalog.CopyID, variantID catalog.VariantID) (catalog.BindCopyResult, error) {
+	if copyID == "" || variantID == "" {
+		return catalog.BindCopyResult{}, catalog.ErrInvalidClassification
+	}
+	tx, err := repository.db.Begin(ctx)
+	if err != nil {
+		return catalog.BindCopyResult{}, classificationPersistenceError("begin transaction", err)
+	}
+	defer func() { _ = tx.Rollback(ctx) }()
+
+	var resourceCopy catalog.Copy
+	var storedCopyID, storageBindingID string
+	var storedVariantID sql.NullString
+	err = tx.QueryRow(ctx, `
+SELECT copy_id::text, variant_id::text, indexcore_root_id, indexcore_resource_id,
+       storage_binding_id::text, availability, created_at, updated_at
+FROM copies
+WHERE copy_id = $1
+FOR UPDATE`, string(copyID)).Scan(
+		&storedCopyID, &storedVariantID, &resourceCopy.IndexCoreRootID, &resourceCopy.IndexCoreResourceID,
+		&storageBindingID, &resourceCopy.Availability, &resourceCopy.CreatedAt, &resourceCopy.UpdatedAt,
+	)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return catalog.BindCopyResult{}, fmt.Errorf("%w: %s", catalog.ErrClassificationCopyNotFound, copyID)
+	}
+	if err != nil {
+		return catalog.BindCopyResult{}, classificationPersistenceError("lock Copy", err)
+	}
+	resourceCopy.ID = catalog.CopyID(storedCopyID)
+	resourceCopy.StorageBindingID = catalog.StorageBindingID(storageBindingID)
+	if storedVariantID.Valid {
+		current := catalog.VariantID(storedVariantID.String)
+		resourceCopy.VariantID = &current
+		if current != variantID {
+			return catalog.BindCopyResult{}, fmt.Errorf("%w: Copy %s is bound to Variant %s", catalog.ErrCopyAlreadyClassified, copyID, current)
+		}
+		if err := tx.Commit(ctx); err != nil {
+			return catalog.BindCopyResult{}, classificationPersistenceError("commit same-target replay", err)
+		}
+		return catalog.BindCopyResult{Copy: resourceCopy, Changed: false}, nil
+	}
+
+	var lockedVariantID string
+	err = tx.QueryRow(ctx, `
+SELECT variant_id::text
+FROM variants
+WHERE variant_id = $1
+FOR KEY SHARE`, string(variantID)).Scan(&lockedVariantID)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return catalog.BindCopyResult{}, fmt.Errorf("%w: %s", catalog.ErrClassificationVariantNotFound, variantID)
+	}
+	if err != nil {
+		return catalog.BindCopyResult{}, classificationPersistenceError("lock target Variant", err)
+	}
+
+	err = tx.QueryRow(ctx, `
+UPDATE copies
+SET variant_id = $2, updated_at = clock_timestamp()
+WHERE copy_id = $1 AND variant_id IS NULL
+RETURNING updated_at`, string(copyID), lockedVariantID).Scan(&resourceCopy.UpdatedAt)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return catalog.BindCopyResult{}, fmt.Errorf("%w: Copy %s changed while locked", catalog.ErrCopyAlreadyClassified, copyID)
+	}
+	if err != nil {
+		return catalog.BindCopyResult{}, classificationPersistenceError("bind Copy to Variant", err)
+	}
+	target := catalog.VariantID(lockedVariantID)
+	resourceCopy.VariantID = &target
+	if err := tx.Commit(ctx); err != nil {
+		return catalog.BindCopyResult{}, classificationPersistenceError("commit classification", err)
+	}
+	return catalog.BindCopyResult{Copy: resourceCopy, Changed: true}, nil
 }
 
 type CatalogRepository struct {
@@ -311,4 +389,11 @@ func wrapWriteError(operation string, err error) error {
 		return nil
 	}
 	return fmt.Errorf("%s: %w", operation, err)
+}
+
+func classificationPersistenceError(operation string, err error) error {
+	if errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) {
+		return err
+	}
+	return fmt.Errorf("%w: %s: %v", catalog.ErrClassificationPersistence, operation, err)
 }
