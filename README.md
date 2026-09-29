@@ -46,6 +46,7 @@ Panta v0.1 must prove five things:
 - [Catalog logical read model](docs/CATALOG-READ-MODEL.md)
 - [Physical resource view](docs/PHYSICAL-RESOURCE-VIEW.md)
 - [Copy classification](docs/COPY-CLASSIFICATION.md)
+- [Acquisition Manifest](docs/ACQUISITION-MANIFEST.md)
 
 ## Collaboration model
 

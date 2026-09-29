@@ -1,6 +1,9 @@
 package migrations
 
-import "testing"
+import (
+	"strings"
+	"testing"
+)
 
 func TestAllReturnsOrderedMigrationHistory(t *testing.T) {
 	all, err := All()
@@ -17,5 +20,30 @@ func TestAllReturnsOrderedMigrationHistory(t *testing.T) {
 		if index > 0 && all[index-1].Version >= migration.Version {
 			t.Fatalf("migrations are not strictly ordered: %d then %d", all[index-1].Version, migration.Version)
 		}
+	}
+}
+
+func TestAcquisitionManifestMigrationUsesApplicationSuppliedUUIDs(t *testing.T) {
+	all, err := All()
+	if err != nil {
+		t.Fatalf("All() error = %v", err)
+	}
+	var sql string
+	for _, migration := range all {
+		if migration.Version == 5 {
+			sql = strings.ToLower(migration.SQL)
+			break
+		}
+	}
+	if sql == "" {
+		t.Fatal("migration 5 is missing")
+	}
+	for _, forbidden := range []string{"create extension", "gen_random_uuid", "uuid_generate"} {
+		if strings.Contains(sql, forbidden) {
+			t.Fatalf("migration 5 contains database UUID generation %q", forbidden)
+		}
+	}
+	if strings.Contains(sql, "manifest_id uuid default") {
+		t.Fatal("manifest_id has a database default")
 	}
 }
