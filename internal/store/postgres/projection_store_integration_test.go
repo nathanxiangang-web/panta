@@ -29,7 +29,7 @@ func TestPostgresProjectionStoreAtomicIdempotentConcurrentAndRestartSafe(t *test
 	if err != nil {
 		t.Fatalf("Apply() error = %v", err)
 	}
-	if !status.Compatible || status.CurrentVersion != 6 || status.LatestVersion != 6 || len(status.Applied) != 6 {
+	if !status.Compatible || status.CurrentVersion != 7 || status.LatestVersion != 7 || len(status.Applied) != 7 {
 		t.Fatalf("migration status = %#v", status)
 	}
 

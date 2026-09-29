@@ -6,7 +6,9 @@ package contracts
 import (
 	"context"
 	"errors"
+	"strings"
 	"time"
+	"unicode/utf8"
 )
 
 // ErrUnsupportedCapability lets an adapter report that an optional operation
@@ -16,6 +18,15 @@ var ErrUnsupportedCapability = errors.New("unsupported provider capability")
 // ProviderID identifies a configured provider implementation without exposing
 // provider-specific identifiers in core contracts.
 type ProviderID string
+
+const MaxProviderIDLength = 128
+
+func (id ProviderID) Valid() bool {
+	value := string(id)
+	trimmed := strings.TrimSpace(value)
+	return utf8.ValidString(value) && trimmed != "" && trimmed == value && !strings.ContainsRune(value, '\x00') &&
+		utf8.RuneCountInString(value) <= MaxProviderIDLength
+}
 
 // CapabilitySet advertises the product capabilities implemented by a provider.
 type CapabilitySet struct {

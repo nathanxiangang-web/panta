@@ -9,7 +9,10 @@ import (
 	"path"
 	"strings"
 	"time"
+	"unicode/utf8"
 )
+
+const MaxProviderScopeLength = 1024
 
 var (
 	ErrNotFound         = errors.New("storage mapping not found")
@@ -51,11 +54,25 @@ type Connection struct {
 type Binding struct {
 	ID                BindingID
 	ConnectionID      ConnectionID
+	ProviderScope     *string
 	OpenListMountPath string
 	IndexCoreRootID   string
 	Status            BindingStatus
 	CreatedAt         time.Time
 	UpdatedAt         time.Time
+}
+
+// ValidateProviderScope validates opaque adapter-owned target scope without
+// interpreting or normalizing its syntax. Nil remains valid for observation.
+func ValidateProviderScope(value *string) error {
+	if value == nil {
+		return nil
+	}
+	if !utf8.ValidString(*value) || strings.TrimSpace(*value) == "" || strings.ContainsRune(*value, '\x00') ||
+		utf8.RuneCountInString(*value) > MaxProviderScopeLength {
+		return ErrInvalidArgument
+	}
+	return nil
 }
 
 // NormalizeMountPath returns the canonical slash form persisted by Panta.
