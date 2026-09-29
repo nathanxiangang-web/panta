@@ -210,6 +210,15 @@ provider task. An existing reference is never overwritten or re-created. The
 provider stays authoritative for its own task status, the fence carries no
 provider lifecycle state, and provider success is not Manifest `READY`.
 
+Gate 3.5 scopes provider execution to a StorageConnection instead of a provider
+identity alone: `internal/providers/session` binds one downloader port to an exact
+`ProviderID` + `ConnectionID` + opaque `CredentialRef`, and the execution step
+resolves that session before any provider call. One `ProviderID` may back several
+connections with different credentials, and a missing or mismatched binding fails
+closed. `contracts.SecretResolver` freezes the opaque secret lookup port with no
+real backend yet; secret contents never enter the Manifest, Job payload, or
+provider-task tables.
+
 The module stores no physical inventory and has no IndexCore/OpenList database
 or network dependency. Real clients, Journal cursors/projectors, Copy updates,
 visibility checks, Mutation Hints, and provider-specific behavior remain outside

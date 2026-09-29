@@ -33,24 +33,36 @@ validated acquisition request
   The Manifest owns intent, target, optional logical association, and a coarse
   product milestone only.
 
-The execution step's provider port is `ProviderCatalog`, which resolves one
-provider identity to `contracts.DownloaderBinding`. That result type lives in
-`internal/providers/contracts`, not in the registry, so the registry and the
-acquisition domain both depend only on the provider-neutral contract:
+The execution step's provider port is `DownloaderSessionResolver`, which resolves
+the complete accepted execution identity to a `contracts.DownloaderBinding`:
+
+```text
+ProviderID + ConnectionID + CredentialRef  ->  contracts.DownloaderBinding
+```
+
+That result type lives in `internal/providers/contracts`, so the composition
+package and the acquisition domain both depend only on the provider-neutral
+contract:
 
 ```text
 contracts
     ^
     |
-acquisition     registry
+acquisition     providers/session
 ```
 
-`registry.Registry` satisfies `acquisition.ProviderCatalog` directly through its
-`LookupDownloader` method, with no composition adapter, and
-`internal/providers/registry/composition_test.go` asserts that wiring at compile
-time. A registry-local projection type would satisfy Go's assignability rules in
-isolation and still fail to wire the real registry, so the assertion is the
-contract, not a convenience.
+Provider identity and provider session identity are different facts, so
+`ProviderID` alone never selects authenticated provider state. A real adapter
+executes under the credential session belonging to one configured
+StorageConnection, and the same `ProviderID` may back several connections with
+different credentials. `CredentialRef` is opaque and never carries secret
+material, so it is safe to persist.
+
+`internal/providers/session.Registry` satisfies
+`acquisition.DownloaderSessionResolver` directly, with no composition adapter.
+`internal/providers/session/registry.go` asserts that wiring at compile time,
+because a structurally similar but distinct named result type would satisfy Go's
+assignability rules in isolation and still fail to wire the real composition.
 
 The acquisition domain cannot import pgx/database/sql, provider execution,
 OpenList, IndexCore, Search, Agent, or authentication implementations. Neither
@@ -198,10 +210,10 @@ fenced Job identity
 ACQUISITION Job payload + Manifest linkage validation
         |
         v
-Gate 3.3 ExecutionInput (ProviderID, CredentialRef, DownloadRequest)
+Gate 3.3 ExecutionInput (ProviderID, ConnectionID, CredentialRef, DownloadRequest)
         |
         v
-provider registry lookup + Downloader capability + descriptor identity
+connection-scoped downloader session resolution + descriptor identity
         |
         v
 durable provider task state
@@ -285,9 +297,37 @@ The claim wait is bounded by `lock_timeout` (5s) on the fence lock. A claim that
 cannot hold the fence fails closed with `ErrProviderTaskContention` and grants no
 authorization, so a stuck lock can never hang a worker or permit a start.
 
+## Credential boundary
+
+`contracts.SecretResolver` is the frozen opaque secret lookup port:
+
+```go
+ResolveSecret(context.Context, contracts.CredentialRef) ([]byte, error)
+```
+
+Gate 3.5 defines the boundary only; there is no real secret backend yet.
+`internal/providers/session.StaticSecretResolver` is a controlled composition
+double for tests: it copies material on registration and on resolution so callers
+cannot mutate stored state, and its errors name only the opaque reference.
+
+Secret contents never enter product state. Concretely:
+
+```text
+acquisition_manifests        -> no credential column
+jobs.payload                 -> carries only schema_version and manifest_id
+acquisition_provider_tasks   -> opaque provider identity and task reference only
+CredentialRef                -> an opaque reference, safe to persist and log
+```
+
+The session registry owns no secret material at all: it stores a downloader port
+per provider/connection identity, and any session state lives inside that port. No
+component in this path logs resolved secret values, and the session package is
+covered by the architecture guard so it cannot reach persistence or integrations.
+
 ## Deferred capabilities
 
 Source Resolver/provider syntax normalization, the Job worker loop, Manifest
 milestone transition to `AWAITING_VISIBILITY`, the 115 adapter, OpenList
 visibility verification, Mutation Hint/scoped refresh, canonical READY
 orchestration, auth/quota, and API/UI are separately authorized later work.
+A real secret backend and the concrete 115 provider session are also deferred.

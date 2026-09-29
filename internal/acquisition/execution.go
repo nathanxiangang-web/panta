@@ -8,16 +8,18 @@ import (
 
 	"github.com/nathanxiangang-web/panta/internal/jobs"
 	"github.com/nathanxiangang-web/panta/internal/providers/contracts"
+	"github.com/nathanxiangang-web/panta/internal/storage"
 )
 
 var (
-	ErrInvalidExecutionRequest  = errors.New("invalid acquisition execution request")
-	ErrProviderNotRegistered    = errors.New("acquisition provider is not registered")
-	ErrProviderNotDownloader    = errors.New("acquisition provider has no downloader capability")
-	ErrProviderIdentityMismatch = errors.New("acquisition provider identity mismatch")
-	ErrProviderTaskReference    = errors.New("acquisition provider returned an invalid task reference")
-	ErrProviderTaskState        = errors.New("acquisition provider returned an unknown task state")
-	ErrExecutionJobMismatch     = errors.New("acquisition execution Job does not match the Manifest")
+	ErrInvalidExecutionRequest      = errors.New("invalid acquisition execution request")
+	ErrProviderNotDownloader        = errors.New("acquisition provider has no downloader capability")
+	ErrProviderIdentityMismatch     = errors.New("acquisition provider identity mismatch")
+	ErrProviderTaskReference        = errors.New("acquisition provider returned an invalid task reference")
+	ErrProviderTaskState            = errors.New("acquisition provider returned an unknown task state")
+	ErrExecutionJobMismatch         = errors.New("acquisition execution Job does not match the Manifest")
+	ErrDownloaderSessionUnresolved  = errors.New("acquisition downloader session could not be resolved")
+	ErrDownloaderSessionIdentitySet = errors.New("acquisition downloader session identity is incomplete")
 	// ErrExecutionSideEffectUncertain reports that an external side effect may
 	// have happened but its opaque task reference was not durably recorded.
 	// Callers must treat this as recovery-required state: a later execution may
@@ -53,15 +55,26 @@ type JobReader interface {
 	Get(context.Context, jobs.JobID) (jobs.Job, error)
 }
 
-// ProviderCatalog is the narrow read port this service needs from the provider
-// registry: resolve one provider identity to its downloader-capable registration.
+// DownloaderSessionRequest is the complete accepted Gate 3.3 execution identity
+// needed to select authenticated provider state.
 //
-// Both sides depend only on the provider-neutral contracts package. The real
-// registry.Registry satisfies this interface directly through its
-// LookupDownloader method - there is no adapter and no duplicated result type -
-// and registry asserts that wiring at compile time.
-type ProviderCatalog interface {
-	LookupDownloader(contracts.ProviderID) (contracts.DownloaderBinding, error)
+// ProviderID alone must never select provider state: a real adapter executes under
+// the credential session belonging to one configured StorageConnection. The
+// CredentialRef is opaque and never carries secret material.
+type DownloaderSessionRequest struct {
+	ProviderID    contracts.ProviderID
+	ConnectionID  storage.ConnectionID
+	CredentialRef *string
+}
+
+// DownloaderSessionResolver resolves the downloader port for an exact
+// provider/connection/credential identity.
+//
+// Both this port and its implementations depend only on the provider-neutral
+// contracts package for the result type, and the composition package
+// internal/providers/session satisfies it directly with no adapter.
+type DownloaderSessionResolver interface {
+	ResolveDownloader(context.Context, DownloaderSessionRequest) (contracts.DownloaderBinding, error)
 }
 
 // ExecutionOption configures the execution step service.
@@ -85,7 +98,7 @@ type ExecutionStepService struct {
 	inputs    *ExecutionInputResolver
 	manifests ManifestReader
 	jobs      JobReader
-	providers ProviderCatalog
+	sessions  DownloaderSessionResolver
 	tasks     ProviderTaskStore
 	now       Clock
 }
@@ -94,15 +107,15 @@ func NewExecutionStepService(
 	inputs *ExecutionInputResolver,
 	manifests ManifestReader,
 	jobs JobReader,
-	providers ProviderCatalog,
+	sessions DownloaderSessionResolver,
 	tasks ProviderTaskStore,
 	options ...ExecutionOption,
 ) (*ExecutionStepService, error) {
-	if inputs == nil || manifests == nil || jobs == nil || providers == nil || tasks == nil {
+	if inputs == nil || manifests == nil || jobs == nil || sessions == nil || tasks == nil {
 		return nil, ErrInvalidExecutionRequest
 	}
 	service := &ExecutionStepService{
-		inputs: inputs, manifests: manifests, jobs: jobs, providers: providers, tasks: tasks, now: time.Now,
+		inputs: inputs, manifests: manifests, jobs: jobs, sessions: sessions, tasks: tasks, now: time.Now,
 	}
 	for _, option := range options {
 		if option == nil {
@@ -116,8 +129,9 @@ func NewExecutionStepService(
 }
 
 // Execute validates the fenced Job, resolves accepted Gate 3.3 execution input,
-// and performs exactly one bounded provider step: either StartDownload once
-// followed by durable linkage, or DownloadStatus for an already-linked task.
+// resolves a downloader session for the exact connection and credential
+// identity, and performs exactly one bounded provider step: either StartDownload
+// once followed by durable linkage, or DownloadStatus for an already-linked task.
 // It performs no OpenList, IndexCore, canonical confirmation, or Copy mutation.
 func (service *ExecutionStepService) Execute(ctx context.Context, request StepRequest) (StepOutcome, error) {
 	if err := ctx.Err(); err != nil {
@@ -139,7 +153,9 @@ func (service *ExecutionStepService) Execute(ctx context.Context, request StepRe
 		return "", fmt.Errorf("%w: requested Manifest %s, got %s", ErrExecutionIdentityMismatch, manifest.ID, input.ManifestID)
 	}
 
-	downloader, err := service.resolveDownloader(input.ProviderID)
+	// Provider identity, connection identity, and the opaque credential reference
+	// together select the downloader. ProviderID alone never does.
+	downloader, err := service.resolveDownloaderSession(ctx, input)
 	if err != nil {
 		return "", err
 	}
@@ -162,6 +178,38 @@ func (service *ExecutionStepService) Execute(ctx context.Context, request StepRe
 			ErrExecutionSideEffectUncertain, manifest.ID)
 	}
 	return service.pollProviderTask(ctx, task, downloader)
+}
+
+// resolveDownloaderSession fails closed unless the resolved session matches the
+// complete execution identity and still advertises a downloader port whose
+// descriptor identity equals the resolved ProviderID.
+func (service *ExecutionStepService) resolveDownloaderSession(
+	ctx context.Context,
+	input ExecutionInput,
+) (contracts.DownloaderProvider, error) {
+	if !input.ProviderID.Valid() {
+		return nil, fmt.Errorf("%w: provider identity %q", ErrDownloaderSessionIdentitySet, input.ProviderID)
+	}
+	if input.ConnectionID == "" {
+		return nil, fmt.Errorf("%w: Manifest %s has no StorageConnection", ErrDownloaderSessionIdentitySet, input.ManifestID)
+	}
+	binding, err := service.sessions.ResolveDownloader(ctx, DownloaderSessionRequest{
+		ProviderID:    input.ProviderID,
+		ConnectionID:  input.ConnectionID,
+		CredentialRef: cloneString(input.CredentialRef),
+	})
+	if err != nil {
+		return nil, fmt.Errorf("%w: provider %s connection %s: %w",
+			ErrDownloaderSessionUnresolved, input.ProviderID, input.ConnectionID, err)
+	}
+	if binding.Descriptor.ID != input.ProviderID {
+		return nil, fmt.Errorf("%w: requested %s, session returned %s",
+			ErrProviderIdentityMismatch, input.ProviderID, binding.Descriptor.ID)
+	}
+	if binding.Downloader == nil || !binding.Descriptor.Capabilities.Downloader {
+		return nil, fmt.Errorf("%w: %s", ErrProviderNotDownloader, input.ProviderID)
+	}
+	return binding.Downloader, nil
 }
 
 // loadLinkedJob reads the ACQUISITION Job first, derives its Manifest from the
@@ -233,26 +281,6 @@ func (service *ExecutionStepService) validateFencedLease(job jobs.Job, request S
 		return mismatch(fmt.Sprintf("Job %s attempt %d does not match %d", job.ID, job.AttemptCount, request.Attempt))
 	}
 	return nil
-}
-
-// resolveDownloader fails closed when the resolved provider identity is not
-// registered, has no Downloader port, or reports a different descriptor identity
-// than the StorageConnection provider identity.
-func (service *ExecutionStepService) resolveDownloader(providerID contracts.ProviderID) (contracts.DownloaderProvider, error) {
-	if !providerID.Valid() {
-		return nil, fmt.Errorf("%w: %q", ErrProviderIdentityMismatch, providerID)
-	}
-	binding, err := service.providers.LookupDownloader(providerID)
-	if err != nil {
-		return nil, fmt.Errorf("%w: %s: %v", ErrProviderNotRegistered, providerID, err)
-	}
-	if binding.Descriptor.ID != providerID {
-		return nil, fmt.Errorf("%w: requested %s, registry returned %s", ErrProviderIdentityMismatch, providerID, binding.Descriptor.ID)
-	}
-	if binding.Downloader == nil || !binding.Descriptor.Capabilities.Downloader {
-		return nil, fmt.Errorf("%w: %s", ErrProviderNotDownloader, providerID)
-	}
-	return binding.Downloader, nil
 }
 
 // claimAndStartProviderTask durably fences the external side effect before

@@ -226,29 +226,88 @@ func (provider *scriptedProvider) counts() (start int, status int, refs []string
 	return provider.startCalls, provider.statusCalls, append([]string(nil), provider.statusRefs...)
 }
 
-// catalogDouble resolves provider identities from an explicit map so registry
-// problems can be injected independently of the real registry. It intentionally
-// implements the exact same port the real registry satisfies, which is asserted at
-// compile time in internal/providers/registry.
-type catalogDouble struct {
-	providers map[contracts.ProviderID]contracts.DownloaderBinding
+// sessionDouble resolves downloader sessions from an explicit map so session
+// problems can be injected independently of the real composition package. It
+// implements the exact same port internal/providers/session satisfies, records the
+// exact identity it was asked to resolve, and is safe for concurrent executions.
+type sessionDouble struct {
+	mu          sync.Mutex
+	bindings    map[sessionKey]contracts.DownloaderBinding
+	err         error
+	calls       int
+	lastRequest acquisition.DownloaderSessionRequest
 }
 
-func (catalog *catalogDouble) LookupDownloader(id contracts.ProviderID) (contracts.DownloaderBinding, error) {
-	binding, exists := catalog.providers[id]
+type sessionKey struct {
+	providerID   contracts.ProviderID
+	connectionID string
+}
+
+func newSessionKey(providerID contracts.ProviderID, connectionID string) sessionKey {
+	return sessionKey{providerID: providerID, connectionID: connectionID}
+}
+
+func (session *sessionDouble) ResolveDownloader(
+	_ context.Context,
+	request acquisition.DownloaderSessionRequest,
+) (contracts.DownloaderBinding, error) {
+	session.mu.Lock()
+	defer session.mu.Unlock()
+	session.calls++
+	session.lastRequest = request
+	if session.err != nil {
+		return contracts.DownloaderBinding{}, session.err
+	}
+	binding, exists := session.bindings[newSessionKey(request.ProviderID, string(request.ConnectionID))]
 	if !exists {
-		return contracts.DownloaderBinding{}, errors.New("provider not found")
+		return contracts.DownloaderBinding{}, fmt.Errorf("no session for provider %s connection %s",
+			request.ProviderID, request.ConnectionID)
 	}
 	return binding, nil
 }
 
+// setBinding, clearBindings, and setError mutate the double under the same lock so
+// tests can drive it while executions may be in flight.
+func (session *sessionDouble) setBinding(key sessionKey, binding contracts.DownloaderBinding) {
+	session.mu.Lock()
+	defer session.mu.Unlock()
+	if session.bindings == nil {
+		session.bindings = map[sessionKey]contracts.DownloaderBinding{}
+	}
+	session.bindings[key] = binding
+}
+
+func (session *sessionDouble) clearBindings() {
+	session.mu.Lock()
+	defer session.mu.Unlock()
+	session.bindings = map[sessionKey]contracts.DownloaderBinding{}
+}
+
+func (session *sessionDouble) setError(err error) {
+	session.mu.Lock()
+	defer session.mu.Unlock()
+	session.err = err
+}
+
+func (session *sessionDouble) resolutionCount() int {
+	session.mu.Lock()
+	defer session.mu.Unlock()
+	return session.calls
+}
+
+func (session *sessionDouble) recordedRequest() acquisition.DownloaderSessionRequest {
+	session.mu.Lock()
+	defer session.mu.Unlock()
+	return session.lastRequest
+}
+
 // The doubles below must satisfy the same ports the real implementations do.
 var (
-	_ acquisition.ProviderCatalog       = (*catalogDouble)(nil)
-	_ acquisition.JobReader             = (*jobReaderDouble)(nil)
-	_ acquisition.ManifestReader        = (*manifestReaderDouble)(nil)
-	_ acquisition.StorageTopologyReader = (*topologyDouble)(nil)
-	_ acquisition.ProviderTaskStore     = (*taskStoreDouble)(nil)
+	_ acquisition.DownloaderSessionResolver = (*sessionDouble)(nil)
+	_ acquisition.JobReader                 = (*jobReaderDouble)(nil)
+	_ acquisition.ManifestReader            = (*manifestReaderDouble)(nil)
+	_ acquisition.StorageTopologyReader     = (*topologyDouble)(nil)
+	_ acquisition.ProviderTaskStore         = (*taskStoreDouble)(nil)
 )
 
 // ---------------------------------------------------------------------------
@@ -256,13 +315,14 @@ var (
 // ---------------------------------------------------------------------------
 
 const (
-	executionProviderID contracts.ProviderID = "gate0-memory"
-	executionBindingID                       = storage.BindingID("b0000000-0000-4000-8000-000000000001")
-	executionConnID                          = storage.ConnectionID("c0000000-0000-4000-8000-000000000001")
-	executionManifestID                      = acquisition.ManifestID("b0000000-0000-4000-8000-000000000010")
-	executionJobID                           = jobs.JobID("b0000000-0000-4000-8000-000000000020")
-	executionOwner                           = "worker-1"
-	executionAttempt                         = 2
+	executionProviderID    contracts.ProviderID = "gate0-memory"
+	executionBindingID                          = storage.BindingID("b0000000-0000-4000-8000-000000000001")
+	executionConnID                             = storage.ConnectionID("c0000000-0000-4000-8000-000000000001")
+	executionManifestID                         = acquisition.ManifestID("b0000000-0000-4000-8000-000000000010")
+	executionJobID                              = jobs.JobID("b0000000-0000-4000-8000-000000000020")
+	executionOwner                              = "worker-1"
+	executionAttempt                            = 2
+	executionCredentialRef                      = "secret-ref://connections/gate0"
 )
 
 func jobIDPointer(id jobs.JobID) *jobs.JobID { return &id }
@@ -278,7 +338,10 @@ func executionTopology(scope string) *topologyDouble {
 			},
 		},
 		connections: map[storage.ConnectionID]storage.Connection{
-			executionConnID: {ID: executionConnID, ProviderType: string(executionProviderID), Status: storage.ConnectionStatusActive},
+			executionConnID: {
+				ID: executionConnID, ProviderType: string(executionProviderID), Status: storage.ConnectionStatusActive,
+				CredentialRef: stringPointer(executionCredentialRef),
+			},
 		},
 	}
 }
@@ -326,7 +389,7 @@ type executionFixture struct {
 	jobsvc    *jobReaderDouble
 	tasks     *taskStoreDouble
 	provider  *scriptedProvider
-	catalog   *catalogDouble
+	sessions  *sessionDouble
 	request   acquisition.StepRequest
 }
 
@@ -340,17 +403,19 @@ func newExecutionFixture(t *testing.T) *executionFixture {
 	jobsvc := &jobReaderDouble{values: map[jobs.JobID]jobs.Job{executionJobID: executionJob()}}
 	tasks := newTaskStoreDouble()
 	provider := newScriptedProvider(executionProviderID)
-	catalog := &catalogDouble{providers: map[contracts.ProviderID]contracts.DownloaderBinding{
-		executionProviderID: {Descriptor: provider.Descriptor(), Downloader: provider},
+	sessions := &sessionDouble{bindings: map[sessionKey]contracts.DownloaderBinding{
+		newSessionKey(executionProviderID, string(executionConnID)): {
+			Descriptor: provider.Descriptor(), Downloader: provider,
+		},
 	}}
 
 	resolver, err := acquisition.NewExecutionInputResolver(manifests, executionTopology("library"))
 	if err != nil {
 		t.Fatalf("NewExecutionInputResolver() error = %v", err)
 	}
-	service := newExecutionService(t, resolver, manifests, jobsvc, catalog, tasks)
+	service := newExecutionService(t, resolver, manifests, jobsvc, sessions, tasks)
 	return &executionFixture{
-		service: service, manifests: manifests, jobsvc: jobsvc, tasks: tasks, provider: provider, catalog: catalog,
+		service: service, manifests: manifests, jobsvc: jobsvc, tasks: tasks, provider: provider, sessions: sessions,
 		request: executionRequest(),
 	}
 }
@@ -360,12 +425,12 @@ func newExecutionService(
 	resolver *acquisition.ExecutionInputResolver,
 	manifests *manifestReaderDouble,
 	jobsvc *jobReaderDouble,
-	catalog acquisition.ProviderCatalog,
+	sessions acquisition.DownloaderSessionResolver,
 	tasks acquisition.ProviderTaskStore,
 ) *acquisition.ExecutionStepService {
 	t.Helper()
 	service, err := acquisition.NewExecutionStepService(
-		resolver, manifests, jobsvc, catalog, tasks,
+		resolver, manifests, jobsvc, sessions, tasks,
 		acquisition.WithExecutionClock(func() time.Time { return executionNow }),
 	)
 	if err != nil {
@@ -577,27 +642,16 @@ func TestExecutionStepRejectsMissingJobOrManifest(t *testing.T) {
 }
 
 // ---------------------------------------------------------------------------
-// tests 3-4: registry and capability
+// tests 1, 7-8: connection-scoped downloader session and capability
 // ---------------------------------------------------------------------------
-
-func TestExecutionStepRejectsUnregisteredProvider(t *testing.T) {
-	fixture := newExecutionFixture(t)
-	fixture.catalog.providers = map[contracts.ProviderID]contracts.DownloaderBinding{}
-
-	if _, err := fixture.service.Execute(context.Background(), fixture.request); !errors.Is(err, acquisition.ErrProviderNotRegistered) {
-		t.Fatalf("Execute() error = %v, want ErrProviderNotRegistered", err)
-	}
-	if start, _, _ := fixture.provider.counts(); start != 0 {
-		t.Fatalf("StartDownload calls = %d, want 0", start)
-	}
-}
 
 func TestExecutionStepRejectsProviderWithoutDownloaderCapability(t *testing.T) {
 	fixture := newExecutionFixture(t)
 	storageOnly := contracts.Descriptor{
 		ID: executionProviderID, DisplayName: "storage only", Capabilities: contracts.CapabilitySet{Storage: true},
 	}
-	fixture.catalog.providers[executionProviderID] = contracts.DownloaderBinding{Descriptor: storageOnly}
+	fixture.sessions.setBinding(newSessionKey(executionProviderID, string(executionConnID)),
+		contracts.DownloaderBinding{Descriptor: storageOnly})
 
 	if _, err := fixture.service.Execute(context.Background(), fixture.request); !errors.Is(err, acquisition.ErrProviderNotDownloader) {
 		t.Fatalf("Execute() error = %v, want ErrProviderNotDownloader", err)
@@ -610,9 +664,8 @@ func TestExecutionStepRejectsProviderWithoutDownloaderCapability(t *testing.T) {
 func TestExecutionStepRejectsDescriptorIdentityMismatch(t *testing.T) {
 	fixture := newExecutionFixture(t)
 	mismatched := newScriptedProvider("other-provider")
-	fixture.catalog.providers[executionProviderID] = contracts.DownloaderBinding{
-		Descriptor: mismatched.Descriptor(), Downloader: mismatched,
-	}
+	fixture.sessions.setBinding(newSessionKey(executionProviderID, string(executionConnID)),
+		contracts.DownloaderBinding{Descriptor: mismatched.Descriptor(), Downloader: mismatched})
 
 	if _, err := fixture.service.Execute(context.Background(), fixture.request); !errors.Is(err, acquisition.ErrProviderIdentityMismatch) {
 		t.Fatalf("Execute() error = %v, want ErrProviderIdentityMismatch", err)
@@ -860,7 +913,7 @@ func TestExecutionStepUncertainFenceSurvivesRepositoryReconstruction(t *testing.
 	if err != nil {
 		t.Fatalf("NewExecutionInputResolver() error = %v", err)
 	}
-	restarted := newExecutionService(t, resolver, fixture.manifests, fixture.jobsvc, fixture.catalog, fixture.tasks)
+	restarted := newExecutionService(t, resolver, fixture.manifests, fixture.jobsvc, fixture.sessions, fixture.tasks)
 	// Even with persistence healthy again, the reservation forbids a new start.
 	fixture.tasks.failClaimCommit = nil
 
@@ -1082,7 +1135,7 @@ func TestExecutionStepSurvivesRestartAndPollsExistingTask(t *testing.T) {
 	if err != nil {
 		t.Fatalf("NewExecutionInputResolver() error = %v", err)
 	}
-	restarted := newExecutionService(t, resolver, fixture.manifests, fixture.jobsvc, fixture.catalog, fixture.tasks)
+	restarted := newExecutionService(t, resolver, fixture.manifests, fixture.jobsvc, fixture.sessions, fixture.tasks)
 	fixture.provider.setState("provider-task-0001", contracts.TaskStateSucceeded)
 
 	outcome, err := restarted.Execute(context.Background(), fixture.request)
@@ -1117,10 +1170,10 @@ func TestExecutionStepRestartWithFreshProviderPollsStoredReference(t *testing.T)
 	if err != nil {
 		t.Fatalf("NewExecutionInputResolver() error = %v", err)
 	}
-	startupCatalog := &catalogDouble{providers: map[contracts.ProviderID]contracts.DownloaderBinding{
-		executionProviderID: {Descriptor: startupProvider.Descriptor(), Downloader: startupProvider},
+	startupSessions := &sessionDouble{bindings: map[sessionKey]contracts.DownloaderBinding{
+		newSessionKey(executionProviderID, string(executionConnID)): {Descriptor: startupProvider.Descriptor(), Downloader: startupProvider},
 	}}
-	startup := newExecutionService(t, resolver, manifests, jobsvc, startupCatalog, tasks)
+	startup := newExecutionService(t, resolver, manifests, jobsvc, startupSessions, tasks)
 	if _, err := startup.Execute(context.Background(), executionRequest()); err != nil {
 		t.Fatalf("startup Execute() error = %v", err)
 	}
@@ -1135,10 +1188,10 @@ func TestExecutionStepRestartWithFreshProviderPollsStoredReference(t *testing.T)
 	// Restart: a brand-new provider that only knows the durable reference.
 	restartedProvider := newScriptedProvider(executionProviderID)
 	restartedProvider.adoptTask(stored.ProviderTaskRef, contracts.TaskStateSucceeded)
-	restartedCatalog := &catalogDouble{providers: map[contracts.ProviderID]contracts.DownloaderBinding{
-		executionProviderID: {Descriptor: restartedProvider.Descriptor(), Downloader: restartedProvider},
+	restartedSessions := &sessionDouble{bindings: map[sessionKey]contracts.DownloaderBinding{
+		newSessionKey(executionProviderID, string(executionConnID)): {Descriptor: restartedProvider.Descriptor(), Downloader: restartedProvider},
 	}}
-	restarted := newExecutionService(t, resolver, manifests, jobsvc, restartedCatalog, tasks)
+	restarted := newExecutionService(t, resolver, manifests, jobsvc, restartedSessions, tasks)
 	outcome, err := restarted.Execute(context.Background(), executionRequest())
 	if err != nil {
 		t.Fatalf("restarted Execute() error = %v", err)
@@ -1163,27 +1216,27 @@ func TestExecutionStepNilDependenciesRejected(t *testing.T) {
 		call func() error
 	}{
 		{name: "nil resolver", call: func() error {
-			_, err := acquisition.NewExecutionStepService(nil, fixture.manifests, fixture.jobsvc, fixture.catalog, fixture.tasks)
+			_, err := acquisition.NewExecutionStepService(nil, fixture.manifests, fixture.jobsvc, fixture.sessions, fixture.tasks)
 			return err
 		}},
 		{name: "nil manifests", call: func() error {
-			_, err := acquisition.NewExecutionStepService(resolver, nil, fixture.jobsvc, fixture.catalog, fixture.tasks)
+			_, err := acquisition.NewExecutionStepService(resolver, nil, fixture.jobsvc, fixture.sessions, fixture.tasks)
 			return err
 		}},
 		{name: "nil jobs", call: func() error {
-			_, err := acquisition.NewExecutionStepService(resolver, fixture.manifests, nil, fixture.catalog, fixture.tasks)
+			_, err := acquisition.NewExecutionStepService(resolver, fixture.manifests, nil, fixture.sessions, fixture.tasks)
 			return err
 		}},
-		{name: "nil providers", call: func() error {
+		{name: "nil sessions", call: func() error {
 			_, err := acquisition.NewExecutionStepService(resolver, fixture.manifests, fixture.jobsvc, nil, fixture.tasks)
 			return err
 		}},
 		{name: "nil tasks", call: func() error {
-			_, err := acquisition.NewExecutionStepService(resolver, fixture.manifests, fixture.jobsvc, fixture.catalog, nil)
+			_, err := acquisition.NewExecutionStepService(resolver, fixture.manifests, fixture.jobsvc, fixture.sessions, nil)
 			return err
 		}},
 		{name: "nil execution clock", call: func() error {
-			_, err := acquisition.NewExecutionStepService(resolver, fixture.manifests, fixture.jobsvc, fixture.catalog, fixture.tasks,
+			_, err := acquisition.NewExecutionStepService(resolver, fixture.manifests, fixture.jobsvc, fixture.sessions, fixture.tasks,
 				acquisition.WithExecutionClock(nil))
 			return err
 		}},
