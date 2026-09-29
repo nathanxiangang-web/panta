@@ -284,3 +284,30 @@ Concurrency must be fenced by the persistence boundary so two different target V
 The Catalog binding operation owns VariantID. The observation projector owns physical availability. Projector replay must preserve existing classification.
 
 Any future correction/reclassification capability requires a separately authorized operation rather than weakening this default rule.
+
+
+## D-020 — Acquisition Manifest records intent; Job Engine owns execution safety
+
+**Status:** Accepted
+
+Panta separates acquisition intent from execution state.
+
+The Acquisition Manifest records:
+- what source is requested;
+- which StorageBinding and target path should receive it;
+- optional logical Asset / Release / Variant association;
+- optional future product user linkage;
+- linkage to a durable Job when execution is authorized;
+- coarse acquisition milestone.
+
+The durable Job Engine remains the sole owner of execution claim, lease, retry, recovery, and terminal execution safety.
+
+Therefore:
+- the Manifest must not duplicate Job lease/attempt/retry state;
+- provider-changing side effects still require a durable Job before execution;
+- Manifest existence alone never authorizes a provider side effect;
+- provider task references and execution attempts are added only in later Gate 3 work;
+- direct acquisition may exist without logical classification;
+- classification remains optional product semantics, not a prerequisite for acquisition intent.
+
+Gate 3.1 creates and validates acquisition intent only. It does not execute 115, OpenList, IndexCore Hint, or any other external side effect.
