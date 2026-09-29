@@ -104,6 +104,7 @@ type PhysicalIdentityReader interface {
 type Repository interface {
 	HierarchyReader
 	PhysicalIdentityReader
+	CopyBinder
 	CreateAsset(context.Context, Asset) error
 	CreateRelease(context.Context, Release) error
 	CreateVariant(context.Context, Variant) error
