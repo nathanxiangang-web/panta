@@ -11,8 +11,14 @@ import (
 
 	"github.com/nathanxiangang-web/panta/internal/acquisition"
 	"github.com/nathanxiangang-web/panta/internal/catalog"
+	"github.com/nathanxiangang-web/panta/internal/jobs"
 	"github.com/nathanxiangang-web/panta/internal/storage"
 )
+
+const acquisitionManifestColumns = `
+manifest_id::text, user_id::text, source_type, source_ref, expected_name,
+target_storage_binding_id::text, target_path, asset_id::text, release_id::text,
+variant_id::text, job_id::text, state, created_at, updated_at`
 
 type acquisitionManifestDB interface {
 	Exec(context.Context, string, ...any) (pgconn.CommandTag, error)
@@ -68,10 +74,7 @@ func (repository *AcquisitionManifestRepository) GetManifest(ctx context.Context
 	if id == "" {
 		return acquisition.Manifest{}, acquisition.ErrInvalidArgument
 	}
-	manifest, err := scanAcquisitionManifest(repository.db.QueryRow(ctx, `
-SELECT manifest_id::text, user_id::text, source_type, source_ref, expected_name,
-       target_storage_binding_id::text, target_path, asset_id::text, release_id::text,
-       variant_id::text, job_id::text, state, created_at, updated_at
+	manifest, err := scanAcquisitionManifest(repository.db.QueryRow(ctx, `SELECT `+acquisitionManifestColumns+`
 FROM acquisition_manifests
 WHERE manifest_id = $1`, string(id)))
 	if errors.Is(err, pgx.ErrNoRows) {
@@ -114,7 +117,7 @@ func scanAcquisitionManifest(row pgx.Row) (acquisition.Manifest, error) {
 		manifest.VariantID = &value
 	}
 	if jobID.Valid {
-		value := acquisition.JobID(jobID.String)
+		value := jobs.JobID(jobID.String)
 		manifest.JobID = &value
 	}
 	return manifest, nil
