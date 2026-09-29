@@ -439,3 +439,45 @@ Rules:
 - Panta uses the 115driver Go library directly rather than CLI/MCP subprocesses for the runtime adapter.
 
 This keeps 115-specific semantics fully behind the provider contract and preserves the existing control-plane/observation-plane separation.
+
+
+## D-026 — Provider-stage outcome commits Manifest milestone and Job state atomically
+
+**Status:** Accepted
+
+The durable ACQUISITION Job spans the full acquisition workflow, not only the provider RPC.
+
+Provider-stage outcome mapping:
+
+```text
+PROVIDER_IN_PROGRESS
+  Manifest ACTIVE
+  Job RUNNING -> RETRY_WAIT
+
+PROVIDER_SUCCEEDED
+  Manifest ACTIVE -> AWAITING_VISIBILITY
+  Job RUNNING -> RETRY_WAIT
+
+PROVIDER_FAILED
+  Manifest ACTIVE -> FAILED
+  Job RUNNING -> FAILED
+
+PROVIDER_CANCELED
+  Manifest ACTIVE -> CANCELED
+  Job RUNNING -> CANCELED
+
+UNCERTAIN / RECOVERY
+  Manifest ACTIVE -> RECOVERY_REQUIRED
+  Job RUNNING -> RECOVERY_REQUIRED
+```
+
+Rules:
+- Manifest and linked Job are updated in one PostgreSQL transaction.
+- Provider success is not Job SUCCEEDED and is never Manifest READY.
+- The same ACQUISITION Job continues into visibility/canonical stages; no second visibility Job is created.
+- The currently RUNNING Job remains fenced by owner, attempt generation, and database-time lease validity.
+- Exact committed outcome replay is idempotent and does not rewrite timestamps.
+- Conflicting outcome replay fails closed.
+- RECOVERY_REQUIRED remains non-terminal and is not normally claimable.
+
+This prevents provider-stage completion from leaving product milestone and control-plane execution state out of sync.
