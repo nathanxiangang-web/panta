@@ -311,3 +311,27 @@ Therefore:
 - classification remains optional product semantics, not a prerequisite for acquisition intent.
 
 Gate 3.1 creates and validates acquisition intent only. It does not execute 115, OpenList, IndexCore Hint, or any other external side effect.
+
+
+## D-021 — Acquisition becomes executable only after atomic Manifest + Job activation
+
+**Status:** Accepted
+
+A PENDING Acquisition Manifest is durable intent, not executable work.
+
+Before any provider-changing acquisition side effect is allowed, Panta must commit one atomic activation that:
+- creates exactly one generic durable `ACQUISITION` Job in `QUEUED`;
+- links that Job to the Manifest;
+- transitions the Manifest from `PENDING` to `ACTIVE`.
+
+The commit boundary must guarantee:
+- no orphan QUEUED acquisition Job;
+- no ACTIVE Manifest without its durable linked Job.
+
+The acquisition Job payload is a minimal versioned reference to `manifest_id`; it does not duplicate source_ref, target path, credentials, or provider-specific execution input.
+
+Activation replay is idempotent by Manifest identity. Once a Manifest is ACTIVE and correctly linked, the durable linked Job is authoritative even if a retry proposes another Job ID.
+
+The acquisition application layer may depend on Panta's provider-neutral Jobs domain for this orchestration. It must not duplicate Job lease/retry/recovery semantics.
+
+Provider execution remains forbidden in Gate 3.2. Later workers may act only after this activation commit is durable.
