@@ -402,3 +402,40 @@ Rules:
 - A missing or mismatched connection/credential binding fails closed before provider side effects.
 
 This decision is required before the real 115 adapter because a real downloader is authenticated, while Gate 3.4 intentionally proved only the provider-neutral side-effect mechanics.
+
+
+## D-025 — 115 Downloader maps provider scope to saveDirID and info_hash to task identity
+
+**Status:** Accepted
+
+The MVP concrete 115 Downloader adapter uses the pinned Go library `github.com/SheltonZhu/115driver v1.3.5`.
+
+Mapping:
+
+```text
+ProviderID = "115"
+
+DownloadRequest.Source.Value
+    -> exact URI passed to 115 offline download
+
+DownloadRequest.Target.Scope
+    -> 115 destination directory ID (wp_path_id / saveDirID)
+
+DownloadRequest.Target.Path
+    -> Panta expected observation path only
+       never converted into provider directory identity
+
+TaskReference.Value
+    -> 115 offline task info_hash
+```
+
+Rules:
+- source URI is never normalized, truncated, or rewritten by the adapter;
+- deterministic Source Resolver owns future source canonicalization;
+- provider destination is never derived from OpenList mount, IndexCore root, or Target.Path;
+- one StartDownload creates exactly one offline URI task;
+- provider task status is mapped from 115 task state only and never implies Panta READY;
+- cancellation deletes the offline task only, never downloaded files;
+- Panta uses the 115driver Go library directly rather than CLI/MCP subprocesses for the runtime adapter.
+
+This keeps 115-specific semantics fully behind the provider contract and preserves the existing control-plane/observation-plane separation.
