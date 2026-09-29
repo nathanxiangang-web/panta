@@ -384,10 +384,63 @@ The package is covered by the architecture guard: it may import only
 `internal/providers/contracts`, the pinned driver package, and the standard
 library.
 
+## Atomic provider-stage outcome handoff
+
+Gate 3.7 commits the outcome of one fenced `RUNNING` `ACQUISITION` Job so the
+Manifest milestone and the Job state can never diverge. D-026 freezes the mapping:
+
+```text
+PROVIDER_IN_PROGRESS   Manifest ACTIVE   (unchanged)   Job RUNNING -> RETRY_WAIT
+PROVIDER_SUCCEEDED     Manifest ACTIVE -> AWAITING_VISIBILITY
+                                                      Job RUNNING -> RETRY_WAIT
+PROVIDER_FAILED        Manifest ACTIVE -> FAILED       Job RUNNING -> FAILED
+PROVIDER_CANCELED      Manifest ACTIVE -> CANCELED     Job RUNNING -> CANCELED
+PROVIDER_RECOVERY      Manifest ACTIVE -> RECOVERY_REQUIRED
+                                                      Job RUNNING -> RECOVERY_REQUIRED
+```
+
+`PROVIDER_SUCCEEDED` is explicitly **not** Job `SUCCEEDED` and not Manifest
+`READY`. The ACQUISITION Job represents the whole acquisition workflow rather than
+one provider RPC, so provider success queues the *same* Job for the later
+visibility stage. No second visibility Job is created.
+
+`internal/acquisition` owns `ProviderOutcomeService` and the `ProviderOutcomeStore`
+port. `internal/store/postgres` implements the commit in one transaction:
+lock Manifest, verify exact identity plus `ACTIVE`, lock Job, verify the frozen
+Gate 3.2 linkage plus the `RUNNING` lease fence (owner, attempt, and unexpired lease
+authorized by database time), then mutate both rows and commit. A failure between
+the two mutations rolls both back.
+
+Job mutation semantics:
+
+```text
+RETRY_WAIT         lease cleared, next_attempt_at = RetryAt, finished_at NULL,
+                   attempt_count preserved. This intentionally does not consult
+                   max_attempts the way a same-stage Job retry does: the Job is
+                   being queued for the next acquisition stage.
+FAILED             lease cleared, next_attempt_at NULL, last_error required,
+                   finished_at set, attempt_count preserved
+CANCELED           lease cleared, next_attempt_at NULL, finished_at set, and no
+                   provider files or tasks are touched by this persistence step
+RECOVERY_REQUIRED  lease cleared, next_attempt_at NULL, last_error required,
+                   finished_at stays NULL because recovery is non-terminal, and
+                   the Job is not claimable by ordinary ClaimNext
+```
+
+When the outcome keeps the Manifest at `ACTIVE`, its `updated_at` is deliberately
+preserved: nothing about the Manifest changed, so rewriting the timestamp would be
+a spurious durable write.
+
+Replay is idempotent. If the Manifest already holds the exact milestone this
+outcome produces and the linked Job already holds its exact D-026 pairing, the call
+returns the durable records with `Changed=false` and rewrites nothing. A different
+proposed outcome after a committed one fails closed with a typed error, and two
+callers with the same fenced attempt produce at most one committed change.
+
 ## Deferred capabilities
 
-Source Resolver/provider syntax normalization, the Job worker loop, Manifest
-milestone transition to `AWAITING_VISIBILITY`, OpenList visibility verification,
-Mutation Hint/scoped refresh, canonical READY orchestration, auth/quota, and
-API/UI are separately authorized later work. A real secret backend, the 115
-ShareProvider, and 115-specific retry policy are also deferred.
+Source Resolver/provider syntax normalization, the Job worker loop, OpenList
+visibility verification, Mutation Hint/scoped refresh, the AWAITING_CANONICAL
+transition, canonical READY confirmation, auth/quota, and API/UI are separately
+authorized later work. A real secret backend, the 115 ShareProvider, and
+115-specific retry policy are also deferred.

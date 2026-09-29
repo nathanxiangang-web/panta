@@ -228,6 +228,13 @@ provider-isolated: it imports only `internal/providers/contracts`, the pinned
 upstream driver package, and the standard library, so no 115 type reaches the
 acquisition domain.
 
+Gate 3.7 commits a fenced provider-stage outcome as one transaction over the
+Manifest and its linked Job, so the two can never diverge. Provider success moves
+the Manifest to `AWAITING_VISIBILITY` and returns the **same** Job to `RETRY_WAIT`
+for the later visibility stage — it is deliberately not Job `SUCCEEDED` and not
+Manifest `READY`. A committed outcome replays idempotently with `Changed=false`
+and no timestamp rewrite, and a conflicting proposal fails closed.
+
 The module stores no physical inventory and has no IndexCore/OpenList database
 or network dependency. Real clients, Journal cursors/projectors, Copy updates,
 visibility checks, Mutation Hints, and provider-specific behavior remain outside
