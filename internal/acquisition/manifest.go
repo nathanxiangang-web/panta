@@ -93,7 +93,6 @@ type CreateManifestRequest struct {
 	AssetID                *catalog.AssetID
 	ReleaseID              *catalog.ReleaseID
 	VariantID              *catalog.VariantID
-	JobID                  *jobs.JobID
 }
 
 type ManifestRepository interface {
@@ -174,7 +173,7 @@ func (service *Service) CreateManifest(ctx context.Context, request CreateManife
 	manifest := Manifest{
 		ID: request.ID, UserID: request.UserID, SourceType: request.SourceType, SourceRef: request.SourceRef,
 		ExpectedName: request.ExpectedName, TargetStorageBindingID: request.TargetStorageBindingID, TargetPath: targetPath,
-		AssetID: request.AssetID, ReleaseID: request.ReleaseID, VariantID: request.VariantID, JobID: request.JobID,
+		AssetID: request.AssetID, ReleaseID: request.ReleaseID, VariantID: request.VariantID, JobID: nil,
 		State: StatePending, CreatedAt: now, UpdatedAt: now,
 	}
 	if err := service.manifests.CreateManifest(ctx, manifest); err != nil {
@@ -208,7 +207,7 @@ func validateCreateRequest(request CreateManifestRequest) (string, error) {
 	if request.ExpectedName != nil && !validRequiredText(*request.ExpectedName, MaxExpectedNameLength) {
 		return "", ErrInvalidArgument
 	}
-	if request.UserID != nil && *request.UserID == "" || request.JobID != nil && *request.JobID == "" ||
+	if request.UserID != nil && *request.UserID == "" ||
 		request.AssetID != nil && *request.AssetID == "" || request.ReleaseID != nil && *request.ReleaseID == "" ||
 		request.VariantID != nil && *request.VariantID == "" {
 		return "", ErrInvalidArgument
@@ -242,6 +241,9 @@ func ValidateManifest(manifest Manifest) error {
 		manifest.AssetID != nil && *manifest.AssetID == "" || manifest.ReleaseID != nil && *manifest.ReleaseID == "" ||
 		manifest.VariantID != nil && *manifest.VariantID == "" ||
 		manifest.ReleaseID != nil && manifest.AssetID == nil || manifest.VariantID != nil && manifest.ReleaseID == nil {
+		return ErrInvalidArgument
+	}
+	if (manifest.State == StatePending && manifest.JobID != nil) || (manifest.State == StateActive && manifest.JobID == nil) {
 		return ErrInvalidArgument
 	}
 	normalized, err := NormalizeTargetPath(manifest.TargetPath)

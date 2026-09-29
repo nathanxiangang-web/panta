@@ -23,7 +23,7 @@ func TestPostgresAcquisitionManifestRoundTripAndConstraints(t *testing.T) {
 		t.Fatalf("NewMigrator() error = %v", err)
 	}
 	status, err := migrator.Apply(ctx)
-	if err != nil || !status.Compatible || status.CurrentVersion != 5 || status.LatestVersion != 5 || len(status.Applied) != 5 {
+	if err != nil || !status.Compatible || status.CurrentVersion != 6 || status.LatestVersion != 6 || len(status.Applied) != 6 {
 		t.Fatalf("Apply() = %#v, %v", status, err)
 	}
 
@@ -69,7 +69,7 @@ func TestPostgresAcquisitionManifestRoundTripAndConstraints(t *testing.T) {
 		SourceType: "opaque-source", SourceRef: "opaque://provider-owned-value", ExpectedName: &expectedName,
 		TargetStorageBindingID: bindingID, TargetPath: "/downloads/package.iso",
 		AssetID: &asset.ID, ReleaseID: &release.ID, VariantID: &variant.ID, JobID: &jobID,
-		State: acquisition.StatePending, CreatedAt: now, UpdatedAt: now,
+		State: acquisition.StateActive, CreatedAt: now, UpdatedAt: now,
 	}
 	if err := repository.CreateManifest(ctx, full); err != nil {
 		t.Fatalf("CreateManifest(full) error = %v", err)
@@ -108,18 +108,22 @@ func TestPostgresAcquisitionManifestRoundTripAndConstraints(t *testing.T) {
 		{name: "StorageBinding", mutate: func(value *acquisition.Manifest) {
 			value.TargetStorageBindingID = "23000000-0000-4000-8000-000000000090"
 			value.JobID = nil
+			value.State = acquisition.StatePending
 		}},
 		{name: "Asset", mutate: func(value *acquisition.Manifest) {
 			missing := catalog.AssetID("23000000-0000-4000-8000-000000000091")
 			value.AssetID, value.ReleaseID, value.VariantID, value.JobID = &missing, nil, nil, nil
+			value.State = acquisition.StatePending
 		}},
 		{name: "Release", mutate: func(value *acquisition.Manifest) {
 			missing := catalog.ReleaseID("23000000-0000-4000-8000-000000000092")
 			value.ReleaseID, value.VariantID, value.JobID = &missing, nil, nil
+			value.State = acquisition.StatePending
 		}},
 		{name: "Variant", mutate: func(value *acquisition.Manifest) {
 			missing := catalog.VariantID("23000000-0000-4000-8000-000000000093")
 			value.VariantID, value.JobID = &missing, nil
+			value.State = acquisition.StatePending
 		}},
 		{name: "Job", mutate: func(value *acquisition.Manifest) {
 			missing := jobs.JobID("23000000-0000-4000-8000-000000000094")
@@ -144,6 +148,7 @@ func TestPostgresAcquisitionManifestRoundTripAndConstraints(t *testing.T) {
 	duplicateJob := minimal
 	duplicateJob.ID = "23000000-0000-4000-8000-000000000080"
 	duplicateJob.JobID = &jobID
+	duplicateJob.State = acquisition.StateActive
 	if err := repository.CreateManifest(ctx, duplicateJob); !errors.Is(err, acquisition.ErrConflict) {
 		t.Fatalf("duplicate job_id error = %v", err)
 	}
@@ -165,6 +170,24 @@ INSERT INTO acquisition_manifests (
 		"23000000-0000-4000-8000-000000000082", bindingID, now,
 	); err == nil {
 		t.Fatal("database accepted non-normalized target_path")
+	}
+	if _, err := pool.Exec(ctx, `
+INSERT INTO acquisition_manifests (
+    manifest_id, source_type, source_ref, target_storage_binding_id,
+    target_path, job_id, state, created_at, updated_at
+) VALUES ($1, 'direct', 'opaque', $2, '/', $3, 'PENDING', $4, $4)`,
+		"23000000-0000-4000-8000-000000000083", bindingID, jobID, now,
+	); err == nil {
+		t.Fatal("database accepted PENDING Manifest with Job link")
+	}
+	if _, err := pool.Exec(ctx, `
+INSERT INTO acquisition_manifests (
+    manifest_id, source_type, source_ref, target_storage_binding_id,
+    target_path, state, created_at, updated_at
+) VALUES ($1, 'direct', 'opaque', $2, '/', 'ACTIVE', $3, $3)`,
+		"23000000-0000-4000-8000-000000000084", bindingID, now,
+	); err == nil {
+		t.Fatal("database accepted ACTIVE Manifest without Job link")
 	}
 
 	var manifestIDDefault sql.NullString

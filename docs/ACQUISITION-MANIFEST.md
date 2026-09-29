@@ -62,11 +62,14 @@ or Copy records.
 
 Migration `0005_acquisition_manifests.sql` adds application-supplied Manifest
 UUIDs, an ACTIVE StorageBinding target reference, optional Catalog references,
-optional future user identity without a user foreign key, and an optional unique
-Job reference. It introduces no UUID extension or database-generated UUID
-default.
+optional future user identity without a user foreign key, and a unique Job
+reference used by activation. It introduces no UUID extension or
+database-generated UUID default. Migration `0006_enforce_acquisition_activation_link.sql`
+requires `PENDING` Manifests to have no Job link and `ACTIVE` Manifests to have
+one.
 
-New Manifests are always created in `PENDING`. The frozen state set also reserves
+New Manifests are always created in `PENDING` with `job_id=NULL`; the public
+creation request cannot pre-link execution state. The frozen state set also reserves
 `ACTIVE`, `AWAITING_VISIBILITY`, `AWAITING_CANONICAL`, `READY`, `FAILED`,
 `RECOVERY_REQUIRED`, and `CANCELED`.
 

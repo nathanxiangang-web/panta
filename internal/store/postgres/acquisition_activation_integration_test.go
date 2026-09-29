@@ -93,14 +93,20 @@ func TestPostgresAcquisitionActivationRejectsInvalidMilestonesAndCorruptLinks(t 
 			t.Fatalf("state %s error = %v", state, err)
 		}
 	}
+	// The database normally prevents these shapes. Drop only the activation
+	// invariant in this disposable schema to prove replay still fails closed if
+	// stored state is corrupted outside the supported persistence path.
+	if _, err := pool.Exec(ctx, "ALTER TABLE acquisition_manifests DROP CONSTRAINT acquisition_manifests_activation_link"); err != nil {
+		t.Fatalf("drop test-only activation constraint: %v", err)
+	}
 
-	activeWithoutJob := seedActivationManifest(t, ctx, manifestRepository, bindingID, "25100000-0000-4000-8000-000000000050", acquisition.StateActive, nil)
+	activeWithoutJob := seedCorruptActivationManifest(t, ctx, pool, bindingID, "25100000-0000-4000-8000-000000000050", acquisition.StateActive, nil)
 	if _, err := service.Activate(ctx, activationRequest(activeWithoutJob.ID, "25100000-0000-4000-8000-000000000051")); !errors.Is(err, acquisition.ErrCorruptActivation) {
 		t.Fatalf("ACTIVE without Job error = %v", err)
 	}
 
 	pendingJobID := seedContractJob(t, ctx, pool, "25100000-0000-4000-8000-000000000052", "25100000-0000-4000-8000-000000000053", acquisition.JobTypeAcquisition, "")
-	pendingLinked := seedActivationManifest(t, ctx, manifestRepository, bindingID, "25100000-0000-4000-8000-000000000053", acquisition.StatePending, &pendingJobID)
+	pendingLinked := seedCorruptActivationManifest(t, ctx, pool, bindingID, "25100000-0000-4000-8000-000000000053", acquisition.StatePending, &pendingJobID)
 	if _, err := service.Activate(ctx, activationRequest(pendingLinked.ID, "25100000-0000-4000-8000-000000000054")); !errors.Is(err, acquisition.ErrCorruptActivation) {
 		t.Fatalf("PENDING with Job error = %v", err)
 	}
@@ -253,6 +259,26 @@ func seedActivationManifest(t *testing.T, ctx context.Context, repository *Acqui
 	}
 	if err := repository.CreateManifest(ctx, manifest); err != nil {
 		t.Fatalf("CreateManifest(%s) error = %v", id, err)
+	}
+	return manifest
+}
+
+func seedCorruptActivationManifest(t *testing.T, ctx context.Context, pool *pgxpool.Pool, bindingID storage.BindingID, id acquisition.ManifestID, state acquisition.State, jobID *jobs.JobID) acquisition.Manifest {
+	t.Helper()
+	now := time.Date(2020, 1, 1, 0, 0, 0, 0, time.UTC)
+	manifest := acquisition.Manifest{
+		ID: id, SourceType: "opaque", SourceRef: "opaque://source", TargetStorageBindingID: bindingID,
+		TargetPath: "/downloads/item", JobID: jobID, State: state, CreatedAt: now, UpdatedAt: now,
+	}
+	if _, err := pool.Exec(ctx, `
+INSERT INTO acquisition_manifests (
+    manifest_id, source_type, source_ref, target_storage_binding_id,
+    target_path, job_id, state, created_at, updated_at
+) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $8)`,
+		string(id), manifest.SourceType, manifest.SourceRef, string(bindingID), manifest.TargetPath,
+		optionalID(jobID), string(state), now,
+	); err != nil {
+		t.Fatalf("seed corrupt Manifest %s: %v", id, err)
 	}
 	return manifest
 }

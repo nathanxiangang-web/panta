@@ -9,6 +9,7 @@ import (
 
 	"github.com/nathanxiangang-web/panta/internal/acquisition"
 	"github.com/nathanxiangang-web/panta/internal/catalog"
+	"github.com/nathanxiangang-web/panta/internal/jobs"
 	"github.com/nathanxiangang-web/panta/internal/storage"
 )
 
@@ -115,6 +116,46 @@ func TestCreateManifestAllowsOptionalAndValidatedLogicalIdentity(t *testing.T) {
 	}
 	if len(manifests.values) != 3 || identities.assetCalls != 2 || identities.releaseCalls != 1 || identities.variantCalls != 1 {
 		t.Fatalf("service calls: manifests=%d assets=%d releases=%d variants=%d", len(manifests.values), identities.assetCalls, identities.releaseCalls, identities.variantCalls)
+	}
+}
+
+func TestCreateManifestCannotPrelinkExecutionState(t *testing.T) {
+	service, _, _, manifests := manifestService(t)
+	created, err := service.CreateManifest(context.Background(), validManifestRequest())
+	if err != nil {
+		t.Fatalf("CreateManifest() error = %v", err)
+	}
+	if created.State != acquisition.StatePending || created.JobID != nil {
+		t.Fatalf("created Manifest = %#v, want PENDING with no Job link", created)
+	}
+	durable := manifests.values[created.ID]
+	if durable.State != acquisition.StatePending || durable.JobID != nil {
+		t.Fatalf("persisted Manifest = %#v, want PENDING with no Job link", durable)
+	}
+}
+
+func TestValidateManifestEnforcesActivationLinkInvariant(t *testing.T) {
+	service, _, _, _ := manifestService(t)
+	manifest, err := service.CreateManifest(context.Background(), validManifestRequest())
+	if err != nil {
+		t.Fatalf("CreateManifest() error = %v", err)
+	}
+	jobID := jobs.JobID("job-a")
+
+	pendingLinked := manifest
+	pendingLinked.JobID = &jobID
+	if err := acquisition.ValidateManifest(pendingLinked); !errors.Is(err, acquisition.ErrInvalidArgument) {
+		t.Fatalf("ValidateManifest(PENDING linked) error = %v", err)
+	}
+	activeUnlinked := manifest
+	activeUnlinked.State = acquisition.StateActive
+	if err := acquisition.ValidateManifest(activeUnlinked); !errors.Is(err, acquisition.ErrInvalidArgument) {
+		t.Fatalf("ValidateManifest(ACTIVE unlinked) error = %v", err)
+	}
+	activeLinked := activeUnlinked
+	activeLinked.JobID = &jobID
+	if err := acquisition.ValidateManifest(activeLinked); err != nil {
+		t.Fatalf("ValidateManifest(ACTIVE linked) error = %v", err)
 	}
 }
 
