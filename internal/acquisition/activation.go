@@ -90,6 +90,22 @@ type acquisitionJobPayload struct {
 	ManifestID    ManifestID `json:"manifest_id"`
 }
 
+// decodeAcquisitionJobPayload strictly decodes the frozen ACQUISITION job
+// payload without interpreting provider-specific data.
+func decodeAcquisitionJobPayload(payload []byte) (acquisitionJobPayload, error) {
+	decoder := json.NewDecoder(bytes.NewReader(payload))
+	decoder.DisallowUnknownFields()
+	var decoded acquisitionJobPayload
+	if err := decoder.Decode(&decoded); err != nil {
+		return acquisitionJobPayload{}, fmt.Errorf("%w: invalid Job payload", ErrCorruptActivation)
+	}
+	var trailing any
+	if err := decoder.Decode(&trailing); !errors.Is(err, io.EOF) {
+		return acquisitionJobPayload{}, fmt.Errorf("%w: invalid trailing Job payload", ErrCorruptActivation)
+	}
+	return decoded, nil
+}
+
 // ValidateLinkedAcquisitionJob fails closed when an ACTIVE Manifest's durable
 // Job does not exactly match the frozen Gate 3.2 linkage contract.
 func ValidateLinkedAcquisitionJob(manifestID ManifestID, job jobs.Job) error {
@@ -97,15 +113,9 @@ func ValidateLinkedAcquisitionJob(manifestID ManifestID, job jobs.Job) error {
 		*job.IdempotencyKey != AcquisitionJobIdempotencyKey(manifestID) {
 		return ErrCorruptActivation
 	}
-	decoder := json.NewDecoder(bytes.NewReader(job.Payload))
-	decoder.DisallowUnknownFields()
-	var payload acquisitionJobPayload
-	if err := decoder.Decode(&payload); err != nil {
-		return fmt.Errorf("%w: invalid Job payload", ErrCorruptActivation)
-	}
-	var trailing any
-	if err := decoder.Decode(&trailing); !errors.Is(err, io.EOF) {
-		return fmt.Errorf("%w: invalid trailing Job payload", ErrCorruptActivation)
+	payload, err := decodeAcquisitionJobPayload(job.Payload)
+	if err != nil {
+		return err
 	}
 	if payload.SchemaVersion != AcquisitionPayloadSchemaVersion || payload.ManifestID != manifestID {
 		return ErrCorruptActivation

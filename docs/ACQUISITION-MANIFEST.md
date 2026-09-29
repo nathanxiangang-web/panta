@@ -33,6 +33,25 @@ validated acquisition request
   The Manifest owns intent, target, optional logical association, and a coarse
   product milestone only.
 
+The execution step's provider port is `ProviderCatalog`, which resolves one
+provider identity to `contracts.DownloaderBinding`. That result type lives in
+`internal/providers/contracts`, not in the registry, so the registry and the
+acquisition domain both depend only on the provider-neutral contract:
+
+```text
+contracts
+    ^
+    |
+acquisition     registry
+```
+
+`registry.Registry` satisfies `acquisition.ProviderCatalog` directly through its
+`LookupDownloader` method, with no composition adapter, and
+`internal/providers/registry/composition_test.go` asserts that wiring at compile
+time. A registry-local projection type would satisfy Go's assignability rules in
+isolation and still fail to wire the real registry, so the assertion is the
+contract, not a convenience.
+
 The acquisition domain cannot import pgx/database/sql, provider execution,
 OpenList, IndexCore, Search, Agent, or authentication implementations. Neither
 Manifest creation nor activation performs a network call or provider operation.
@@ -117,10 +136,158 @@ Migration `0007_storage_binding_provider_scope.sql` leaves provider scope nullab
 for observation-only bindings, has no default, and rejects empty or overlong
 non-null values.
 
+## Durable provider-task linkage and the side-effect fence
+
+Gate 3.4 crosses the external side-effect boundary exactly once and records what
+it did. Migration `0008_acquisition_provider_tasks.sql` adds one provider-neutral
+table, refined by the append-only migration
+`0009_provider_task_side_effect_fence.sql`:
+
+```text
+acquisition_provider_tasks
+  manifest_id        uuid PRIMARY KEY  -> acquisition_manifests
+  job_id             uuid NOT NULL UNIQUE -> jobs
+  provider_id        text   (bounded opaque registry identity)
+  provider_task_ref  text NULL (bounded opaque provider reference)
+  state              text   START_RESERVED | REFERENCE_KNOWN
+  created_at, updated_at
+```
+
+One Manifest maps to at most one provider task and one Job maps to at most one
+provider task. Provider identity and reference values are bounded opaque text:
+Panta never parses or normalizes them, and the table stores no provider status
+because the provider remains authoritative for its own task lifecycle. There are
+no database defaults and no provider-specific columns. A conflicting identity
+fails closed rather than overwriting a known task reference.
+
+`state` records **side-effect certainty only**, never provider task progress. The
+database enforces the invariant so an uncommitted attempt can never look
+successful:
+
+```text
+START_RESERVED    -> provider_task_ref IS NULL
+REFERENCE_KNOWN   -> provider_task_ref IS NOT NULL and non-blank and <= 1024
+```
+
+The durable row is therefore written **before** the external call, not after. It
+exists in two phases:
+
+```text
+no row                                   -> persist START_RESERVED  (exclusive)
+START_RESERVED + reference               -> persist REFERENCE_KNOWN
+START_RESERVED + no reference            -> fail closed, no start
+REFERENCE_KNOWN + same reference         -> idempotent replay
+REFERENCE_KNOWN + different reference    -> identity conflict
+```
+
+The store performs this decision in one transaction under a per-Manifest
+`pg_advisory_xact_lock`, because transactional uniqueness alone cannot serialize
+concurrent claimers: two executions could each observe "no row" before either
+commits and both would be authorized to start a task. Exactly one claimer can
+observe a fresh reservation.
+
+## One bounded execution step
+
+`acquisition.ExecutionStepService` performs one bounded provider step for one
+fenced `RUNNING` `ACQUISITION` Job:
+
+```text
+fenced Job identity
+        |
+        v
+ACQUISITION Job payload + Manifest linkage validation
+        |
+        v
+Gate 3.3 ExecutionInput (ProviderID, CredentialRef, DownloadRequest)
+        |
+        v
+provider registry lookup + Downloader capability + descriptor identity
+        |
+        v
+durable provider task state
+   REFERENCE_KNOWN   -> DownloadStatus for the exact stored reference
+   START_RESERVED    -> fail closed: no reference is known
+   no row            -> claim START_RESERVED, then StartDownload once,
+                        then commit the opaque reference
+```
+
+`StartDownload` is reachable only through a newly won `START_RESERVED` claim, so
+it can happen at most once per Manifest even under concurrent executions, a lost
+reference, or a crash between the external success and the durable commit.
+
+The step fails closed before any provider call when the Job is not an
+`ACQUISITION` Job, its payload does not match the Manifest, the Manifest is not
+linked to that Job, the Job is not `RUNNING`, the lease owner or attempt does not
+match the requesting lease, the lease has expired, the provider is not
+registered, the registry entry has no Downloader port, the descriptor identity
+differs from the resolved `ProviderID`, or the durable linkage contradicts the
+requested identity. Provider-specific errors stay attributed but are never
+converted into provider types inside the domain.
+
+Provider task states map only to step outcomes:
+
+```text
+PENDING / RUNNING -> PROVIDER_IN_PROGRESS
+SUCCEEDED         -> PROVIDER_SUCCEEDED
+FAILED            -> PROVIDER_FAILED
+CANCELED          -> PROVIDER_CANCELED
+```
+
+Provider success is not Manifest `READY`. `READY` still requires OpenList
+visibility, canonical confirmation, and Copy mutation, none of which Gate 3.4
+performs. An empty or invalid returned task reference and an unknown provider task
+state both fail closed.
+
+## Uncertain external side effects
+
+If `StartDownload` succeeds but the returned reference cannot be committed, the
+step returns `ErrExecutionSideEffectUncertain` and the `START_RESERVED` row
+remains durable. Because a start attempt is known while no reference is, that
+outcome must be reconciled by an operator rather than treated as ordinary retry:
+every later execution observes the reservation and fails closed instead of
+starting a second provider task. This holds within the process, across service and
+repository reconstruction, and under concurrent executions.
+
+Reservations are never cleared automatically. A crash before the external call and
+a crash after it are indistinguishable from durable state alone, so releasing a
+`START_RESERVED` row is an explicit operator decision. The marker carries no lease,
+attempt, retry, or provider-status semantics; the Job Engine remains the only
+owner of execution state.
+
+Two situations leave a reservation behind:
+
+```text
+StartDownload returned a reference, but the reference commit failed
+StartDownload returned an error, so no external effect could be confirmed
+```
+
+Both are treated identically, conservatively: a returned error does not prove the
+provider did not accept the request, so the Manifest stays fenced and every later
+execution fails closed. The provider is still invoked at most once.
+
+Recovery is an operator procedure, not an automatic retry:
+
+```text
+1. Inspect acquisition_provider_tasks for the Manifest: if a row is
+   REFERENCE_KNOWN, nothing is wrong and executions poll it normally.
+2. For a START_RESERVED row, determine from the provider whether a task
+   already exists for the Manifest's DownloadRequest.
+3. If a task exists, supply its opaque reference so the reservation
+   transitions to REFERENCE_KNOWN.
+4. If no task exists, the operator may delete the START_RESERVED row,
+   which re-authorizes exactly one future start attempt.
+```
+
+Step 4 is why reservations are not auto-cleared: deleting the row is a claim that
+no external effect happened, and only the provider side can establish that.
+
+The claim wait is bounded by `lock_timeout` (5s) on the fence lock. A claim that
+cannot hold the fence fails closed with `ErrProviderTaskContention` and grants no
+authorization, so a stuck lock can never hang a worker or permit a start.
+
 ## Deferred capabilities
 
-Provider task references, Source Resolver/provider syntax normalization, Job
-worker execution, provider registry selection, DownloaderProvider calls, 115,
-OpenList visibility verification, Mutation
-Hint/scoped refresh, canonical READY orchestration, auth/quota, and API/UI are
-separately authorized later work.
+Source Resolver/provider syntax normalization, the Job worker loop, Manifest
+milestone transition to `AWAITING_VISIBILITY`, the 115 adapter, OpenList
+visibility verification, Mutation Hint/scoped refresh, canonical READY
+orchestration, auth/quota, and API/UI are separately authorized later work.

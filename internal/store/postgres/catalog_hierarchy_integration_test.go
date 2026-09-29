@@ -19,7 +19,7 @@ func TestPostgresCatalogHierarchyReadsAreScopedOrderedAndPreserveCopyState(t *te
 		t.Fatalf("NewMigrator() error = %v", err)
 	}
 	status, err := migrator.Apply(ctx)
-	if err != nil || !status.Compatible || status.CurrentVersion != 7 {
+	if err != nil || !status.Compatible || status.CurrentVersion != 9 {
 		t.Fatalf("Apply() = %#v, %v", status, err)
 	}
 	bindingID := storage.BindingID("17000000-0000-4000-8000-000000000001")

@@ -91,7 +91,7 @@ func TestControlledObservation(t *testing.T) {
 	if err != nil {
 		t.Fatalf("apply Panta migrations: %v", err)
 	}
-	if !status.Compatible || status.CurrentVersion != 7 || len(status.Applied) != 7 {
+	if !status.Compatible || status.CurrentVersion != 9 || len(status.Applied) != 9 {
 		t.Fatalf("Panta migration status = %#v, want compatible migrations 0001-0004", status)
 	}
 
