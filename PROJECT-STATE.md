@@ -693,30 +693,33 @@ Explicitly deferred:
 
 ## Current bounded task
 
-### Gate 3.8 — OpenList known-path visibility verifier
+### Gate 3.8 — IndexCore trusted Mutation Hint and observation handoff
 
 Status: **AUTHORIZED / IN PROGRESS**
 
-Tracking: GitHub Issue #37
+Tracking: GitHub Issue #39
+
+Correction:
+- Issue #37 (direct Panta -> OpenList visibility verifier) was closed NOT PLANNED.
+- D-029 supersedes D-028 for acquisition verification.
+- Panta does not directly inspect OpenList in the acquisition path.
 
 Scope:
-- implement a real OpenList HTTP VisibilityPort using exact known-path `POST /api/fs/get`;
-- preserve configured base-path prefixes and optional Authorization header;
-- distinguish exact object-not-found from authorization/storage/provider/integration failure;
-- derive OpenList path only from StorageBinding.openlist_mount_path + Manifest.target_path;
-- require AWAITING_VISIBILITY Manifest + ACTIVE StorageBinding;
-- return VISIBLE / NOT_VISIBLE observation without mutating Manifest or Job;
-- no list/search/walk and no provider/IndexCore calls.
+- implement the Panta-owned typed client for IndexCore's accepted trusted Mutation Hint transport;
+- exact Hint mapping: root_id = StorageBinding.indexcore_root_id, scope_key = Manifest.target_path, reason = POSSIBLE_CHANGE;
+- preserve IndexCore's loopback-only Bearer-authenticated Hint trust boundary;
+- require AWAITING_VISIBILITY Manifest + exact linked fenced ACQUISITION Job;
+- accepted Hint atomically hands the same Job to Manifest AWAITING_CANONICAL + Job RETRY_WAIT;
+- Hint acceptance remains non-canonical and never READY;
+- duplicate Hint after a lost Panta commit is allowed under IndexCore's at-least-once/coalescing semantics;
+- no direct Panta OpenList HTTP/API/database access.
 
 Explicitly deferred:
-- visibility-stage Job outcome commit;
-- polling cadence;
-- IndexCore Mutation Hint / scoped refresh;
-- AWAITING_CANONICAL transition;
-- Journal/canonical confirmation;
-- READY;
-- OpenList access/302;
-- API/UI.
+- Q5/Journal canonical confirmation;
+- Copy/Projector completion orchestration;
+- READY transition;
+- acquisition worker loop;
+- public API/UI.
 
 ## Planned Gate 0 task sequence
 
@@ -760,6 +763,6 @@ Until the relevant gate is accepted, do not implement:
 
 ## Next architect action
 
-Review the Gate 3.8 PR for Issue #37 against exact OpenList known-path HTTP semantics, D-028 mount+target mapping, strict not-found/error separation, AWAITING_VISIBILITY-only verification, integration isolation, and full Gate 1/2/3.1-3.7 regression.
+Review the Gate 3.8 PR for Issue #39 against the real IndexCore trusted Hint transport, D-029 root/scope mapping, loopback/Bearer trust preservation, AWAITING_VISIBILITY -> AWAITING_CANONICAL atomic handoff, at-least-once Hint replay safety, and full Gate 1/2/3.1-3.7 regression.
 
 Do not authorize Gate 3.9 until Gate 3.8 is accepted.
