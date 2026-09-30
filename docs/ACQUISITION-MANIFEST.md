@@ -532,28 +532,45 @@ the mapping is configuration, not derivation. The joined path must stay absolute
 normalized, NUL-free, and beneath or equal to the configured mount, which is checked
 before any network call.
 
+The join belongs to the **OpenList boundary**, not to Panta's port contract. The
+`VisibilityPort` receives and echoes Panta's coordinates — the mount and the
+*binding-relative* target:
+
+```text
+port coordinates (Panta)   Mount "/115"  Path "/downloads/item"
+wire path (OpenList)                  POST /api/fs/get {"path":"/115/downloads/item"}
+```
+
 `internal/integrations/openlist.HTTPClient` implements the existing
-`VisibilityPort` over `POST <base>/api/fs/get`, a configured base path is preserved,
-the body carries exactly the requested path with no list or mutation fields, and an
+`VisibilityPort` over `POST <base>/api/fs/get`, performs that D-028 join itself, and
+echoes the port coordinates back in the fact. A configured base path is preserved,
+the body carries exactly the wire path with no list or mutation fields, and an
 optional `Authorization` token is sent verbatim and redacted from every message the
-client can produce. The client never lists, walks, searches, or touches the OpenList
+client can produce. The timeout is bounded even when a caller injects its own
+`HTTPClient`. The client never lists, walks, searches, or touches the OpenList
 database, and it issues exactly one request.
 
 Classification is exact, because OpenList carries application errors in an HTTP 200
-envelope:
+envelope. The HTTP status is examined first, so a non-2xx gateway page that is HTML
+or plain text stays a remote error rather than becoming a malformed response:
 
 ```text
-HTTP 200 + envelope code 200 + one valid object   -> VISIBLE
-HTTP 200 + envelope "object not found" (exact)     -> NOT_VISIBLE
-HTTP 200 + any other non-200 envelope              -> ErrRemote
-non-2xx HTTP                                       -> ErrRemote
-malformed / trailing / oversized JSON              -> ErrMalformedResponse
-transport failure                                  -> ErrTransport
+HTTP 200 + code 200 + a single object             -> VISIBLE
+HTTP 200 + exact "object not found"               -> NOT_VISIBLE
+HTTP 200 + any other non-200 envelope             -> ErrRemote
+non-2xx HTTP, including non-JSON bodies           -> ErrRemote
+malformed / trailing / oversized JSON             -> ErrMalformedResponse
+transport failure                                 -> ErrTransport
 ```
 
-Only the exact upstream sentinel may produce `NOT_VISIBLE`. Authorization failures,
-storage-not-ready, provider failures, near-miss messages, and non-2xx responses all
-stay errors, so an integration failure can never be mistaken for an absent object.
+A successful `/api/fs/get` carries a **single object**, because OpenList serialises
+`common.Resp[T]{Data T}` from `FsGetResp`; the array form is the directory-listing
+shape and is rejected on this endpoint.
+
+Only the exact upstream sentinel — `internal/errs.ObjectNotFound`, `"object not
+found"` — may produce `NOT_VISIBLE`. Authorization failures, storage-not-ready,
+provider failures, near-miss messages, and non-2xx responses all stay errors, so an
+integration failure can never be mistaken for an absent object.
 A `NOT_VISIBLE` fact echoes the requested mount and path, `VISIBLE` requires exactly
 one object whose name matches the requested basename with a non-negative size, and
 unknown object fields such as raw download URLs are tolerated but never persisted or

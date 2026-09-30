@@ -139,16 +139,30 @@ func TestVisibilityPathMappingFollowsD028(t *testing.T) {
 			if err != nil {
 				t.Fatalf("Verify() error = %v", err)
 			}
-			// 17: exactly one call with the exact mount and joined path.
+			// 17: exactly one call carrying Panta port coordinates - the binding mount
+			// and the binding-relative target, NOT the joined wire path.
 			calls, requests := fixture.port.snapshot()
 			if calls != 1 {
 				t.Fatalf("Stat calls = %d, want exactly 1", calls)
 			}
-			if requests[0].Mount != test.wantMount || requests[0].Path != test.wantPath {
-				t.Fatalf("Stat request = %+v, want mount %q path %q", requests[0], test.wantMount, test.wantPath)
+			if requests[0].Mount != test.wantMount || requests[0].Path != test.target {
+				t.Fatalf("Stat request = %+v, want port coordinates mount %q target %q",
+					requests[0], test.wantMount, test.target)
 			}
-			if result.Mount != test.wantMount || result.TargetPath != test.target || result.OpenListPath != test.wantPath {
-				t.Fatalf("result = %+v", result)
+			if requests[0].Path == test.wantPath && test.wantPath != test.target {
+				t.Fatalf("Stat received the joined wire path %q instead of the binding-relative target %q",
+					test.wantPath, test.target)
+			}
+			// The fact echoed port coordinates, and the joined wire path is recorded
+			// separately for the OpenList boundary.
+			if result.Mount != test.wantMount || result.TargetPath != test.target {
+				t.Fatalf("result lost its port coordinates: %+v", result)
+			}
+			if result.OpenListPath != test.wantPath {
+				t.Fatalf("OpenListPath = %q, want the D-028 join %q", result.OpenListPath, test.wantPath)
+			}
+			if result.Fact.Mount != test.wantMount || result.Fact.Path != test.target {
+				t.Fatalf("fact did not echo port coordinates: %+v", result.Fact)
 			}
 			if result.State != acquisition.VisibilityNotVisible {
 				t.Fatalf("state = %q, want NOT_VISIBLE", result.State)
@@ -177,8 +191,8 @@ func TestVisibilityPathIgnoresProviderScopeAndIndexCoreRoot(t *testing.T) {
 		t.Fatal("OpenList path was derived from provider_scope")
 	}
 	_, requests := fixture.port.snapshot()
-	if requests[0].Path != "/115/downloads/item" {
-		t.Fatalf("Stat path = %q, want the D-028 join", requests[0].Path)
+	if requests[0].Mount != "/115" || requests[0].Path != "/downloads/item" {
+		t.Fatalf("Stat request = %+v, want port coordinates /115 + /downloads/item", requests[0])
 	}
 }
 
@@ -392,8 +406,8 @@ func TestVisibilityCallsPortExactlyOnceAndNothingElse(t *testing.T) {
 	if calls != 1 {
 		t.Fatalf("Stat calls = %d, want exactly 1", calls)
 	}
-	if len(requests) != 1 || requests[0].Mount != "/115" || requests[0].Path != "/115/downloads/item" {
-		t.Fatalf("requests = %+v", requests)
+	if len(requests) != 1 || requests[0].Mount != "/115" || requests[0].Path != "/downloads/item" {
+		t.Fatalf("requests = %+v, want port coordinates /115 + /downloads/item", requests)
 	}
 	if fixture.bindings.calls != 1 {
 		t.Fatalf("binding reads = %d, want exactly 1", fixture.bindings.calls)

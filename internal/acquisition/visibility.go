@@ -40,11 +40,12 @@ type VisibilityResult struct {
 	ManifestID ManifestID
 	BindingID  storage.BindingID
 	State      VisibilityState
-	// Mount and TargetPath echo the exact binding mount and binding-relative target
-	// that were requested.
+	// Mount and TargetPath are Panta's port coordinates: the mount coordinate and the
+	// binding-relative target. The returned fact echoes exactly these.
 	Mount      string
 	TargetPath string
-	// OpenListPath is the derived absolute path per D-028.
+	// OpenListPath is the derived absolute OpenList wire path per D-028. It is
+	// informational: the join belongs to the OpenList boundary, not to this port.
 	OpenListPath string
 	// Fact is the observation itself. It is informational and is not persisted.
 	Fact openlist.VisibilityFact
@@ -154,14 +155,14 @@ func (verifier *VisibilityVerifier) Verify(ctx context.Context, manifestID Manif
 	if err != nil {
 		return VisibilityResult{}, err
 	}
-	// D-028: the OpenList address is the join of the mount and the binding-relative
-	// target, and that joined absolute path is what is sent to OpenList. The
-	// binding-relative target is still echoed separately in the result.
+	// The port receives Panta's coordinates: the mount and the binding-relative
+	// target. The D-028 join to the OpenList wire path belongs to the OpenList
+	// boundary, so it is computed here only to record what will be observed.
 	openListPath := joinOpenListPath(mount, targetPath)
 	if err := validateJoinedPath(openListPath, mount); err != nil {
 		return VisibilityResult{}, err
 	}
-	request := openlist.StatRequest{Mount: mount, Path: openListPath}
+	request := openlist.StatRequest{Mount: mount, Path: targetPath}
 
 	fact, err := verifier.port.Stat(ctx, request)
 	if err != nil {
