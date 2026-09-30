@@ -3,8 +3,8 @@
 > Canonical short-form project memory for Architect/AI sessions.
 >
 > Last architecture-memory synchronization: **2026-09-30**
-> Active Gate: **3.13 / Issue #50 — Bounded one-shot acquisition runner and recovery integration**
-> Governing corrections: **D-029** (IndexCore-owned observation), **D-030** (Git-first AI reconstruction), **D-032** (durable result_name locator), **D-033** (READY anchored to one canonical projected Copy), **D-034** (one-claim stage routing), **D-035** (type-scoped claiming and atomic recovery), and **D-036** (one explicit runner tick).
+> Active Gate: **3.14 / Issue #52 — Opt-in serial acquisition worker lifecycle and bounded scheduling**
+> Governing corrections: **D-029** (IndexCore-owned observation), **D-030** (Git-first AI reconstruction), **D-032** (durable result_name locator), **D-033** (READY anchored to one canonical projected Copy), **D-034** (one-claim stage routing), **D-035** (type-scoped claiming and atomic recovery), **D-036** (one explicit runner tick), and **D-037** (opt-in worker lifecycle).
 >
 > **Read this file before planning, reviewing, or authorizing any new Gate.**
 >
@@ -263,6 +263,21 @@ Never claim an unrelated Job; never perform two Manifest stages in one tick; nev
 
 Gate 3.13 does not start an autonomous background worker, timer, process runtime, or live credential integration. Later runtime wiring requires a new Gate.
 
+## 5.6 Opt-in worker lifecycle
+
+D-037 / Gate 3.14 makes D-036 RunOnce repeatable under one controlled, opt-in serial worker:
+
+```text
+disabled-by-default worker, validated unique owner and bounded policy
+    → one RunOnce at a time
+    → interruptible bounded wait
+    → next distinct tick or graceful shutdown
+```
+
+IDLE/RECOVERY_ONLY/STAGE_COMPLETE are normal; errors must not bypass stage stores or mutate Job-only terminal state; ErrLeaseRecoveryDebt must stop new work. Bound tick duration below lease with a documented margin. Cancellation propagates to in-flight work while START_RESERVED remains the durable duplicate-start barrier.
+
+Do not claim enabled production service until real PostgreSQL, IndexCore and 115 authenticated runtime composition is complete in a separately accepted Gate. A process enabled without dependencies must fail closed; default process remains side-effect-free.
+
 ## 6. Job Engine invariants
 
 The ACQUISITION Job is the durable execution safety boundary.
@@ -386,14 +401,15 @@ Accepted:
 - Gate 3.10 — canonical Q5 + projected Copy + atomic READY finalization
 - Gate 3.11 — one-claim acquisition stage dispatcher and controlled E2E
 - Gate 3.12 — acquisition-only claims and atomic expired-lease recovery
+- Gate 3.13 — bounded one-shot acquisition RunOnce
 
 Authorized now:
-- **Gate 3.13 — Issue #50 — Bounded one-shot acquisition runner, scoped claim, and recovery integration**
+- **Gate 3.14 — Issue #52 — Opt-in serial acquisition worker lifecycle and bounded scheduling**
 
 Not authorized yet:
 - direct Panta OpenList acquisition verifier;
 - direct acquisition Copy creation/upsert;
-- continuous worker and Gate 3.14+ work beyond the one-shot runner;
+- production provider/IndexCore credentials, deployment and Gate 3.15+ work beyond the opt-in worker lifecycle;
 - API/UI;
 - auth/quota/share;
 - Agent implementation;
