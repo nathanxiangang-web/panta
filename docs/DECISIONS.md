@@ -610,3 +610,45 @@ After IndexCore accepts the trusted Hint, Panta may advance to `AWAITING_CANONIC
 Repeated identical Mutation Hints are intentionally safe at-least-once signals: IndexCore coalesces them through its accepted DirtyScopeWork state machine. A duplicate Hint may advance signal metadata but cannot duplicate the provider download or directly create Canonical truth.
 
 D-008's READY principle remains unchanged in meaning: the acquired result must become observable through the OpenList-backed IndexCore pipeline and then be canonically confirmed through IndexCore Query/Journal before Panta marks READY. Panta itself does not need a separate OpenList verification hop.
+
+
+## D-030 — AI-assisted development reconstructs truth from Git, not chat context
+
+**Status:** Accepted
+
+Panta is developed through long-running AI-assisted architecture and implementation sessions. Accumulated chat context is not reliable enough to act as project memory by itself.
+
+A compact canonical memory file is therefore maintained at:
+
+```text
+docs/AI-ARCHITECTURE-MEMORY.md
+```
+
+Before designing, authorizing, implementing, or reviewing a Gate, the Architect/AI must reconstruct project truth in this order:
+
+```text
+AI-ARCHITECTURE-MEMORY
+    ↓
+PROJECT-STATE
+    ↓
+newest relevant DECISIONS
+    ↓
+PROJECT-CONTEXT / MVP-BLUEPRINT
+    ↓
+current Issue / PR
+    ↓
+exact code + tests + exact-head CI
+```
+
+Rules:
+- chat memory never overrides current Git;
+- a newer explicit accepted decision supersedes an older decision/prose/Issue/PR statement;
+- contradictions are resolved explicitly and then synchronized across project-memory docs;
+- an external integration must be checked against its current accepted contract before a new Panta Gate is written;
+- Git must be searched for an existing owner before introducing a new module or responsibility;
+- project memory is synchronized after accepted architecture changes and after any discovered context-drift incident;
+- team topology remains exactly 1 Architect + 1 Developer unless an explicit later decision changes it.
+
+The purpose is not to duplicate all historical detail. The compact memory keeps only current invariants, dangerous superseded assumptions, active Gate state, and the required reconstruction protocol.
+
+This decision was introduced after a context-drift incident in which direct Panta -> OpenList acquisition verification was proposed despite the already accepted D-018 IndexCore-owned observation boundary. D-029 corrected the architecture; D-030 prevents the same class of drift from becoming process-normal.
