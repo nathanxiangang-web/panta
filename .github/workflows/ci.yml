@@ -135,3 +135,19 @@ jobs:
         run: >-
           go test ./test/e2e/observation -count=1 -v
           -run 'TestControlledIndexCoreHintObservation|TestAcquisitionRefreshOwnsNoOpenListClient|TestIndexCoreHintStandInContract'
+      - name: Create separate Gate 3.8 observation-hint database
+        shell: bash
+        run: >-
+          docker exec "${{ job.services.postgres.id }}"
+          psql -U panta -d indexcore_e2e -v ON_ERROR_STOP=1
+          -c "CREATE DATABASE panta_hint_e2e"
+      # Issue #39 test 30. Opted in separately from Gate 1 and given its own database
+      # because it resets the schema it runs against; sharing panta_test with the
+      # parallel internal/store/postgres suite deadlocks on concurrent schema reset.
+      - name: Run controlled acquisition observation-hint E2E
+        env:
+          PANTA_GATE3_HINT_E2E: "1"
+          PANTA_GATE3_HINT_DATABASE_URL: postgres://panta:panta_e2e@127.0.0.1:5432/panta_hint_e2e?sslmode=disable
+        run: >-
+          go test ./test/e2e/observation -count=1 -v
+          -run 'TestControlledIndexCoreHintObservation|TestAcquisitionRefreshOwnsNoOpenListClient|TestIndexCoreHintStandInContract'

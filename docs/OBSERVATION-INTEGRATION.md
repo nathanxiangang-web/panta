@@ -3,14 +3,16 @@
 Gate 1 keeps one observation path:
 
 ```text
-Storage -> OpenList -> IndexCore Collector -> Canonical + Journal -> Panta
+OpenList-compatible source
+        -> IndexCore OpenList collector / Canonical Inventory / Journal
+        -> Panta IndexCore Q4/Q5/Q8 client
+        -> Panta projector and Catalog Copy
 ```
 
-IndexCore owns OpenList tree collection and the OpenList-facing observation
-pipeline. Panta owns the product-side `StorageConnection`, `StorageBinding`,
-projection cursor, and Catalog `Copy`. Panta does not read or write the IndexCore
-database, does not implement a second OpenList tree walker, and — per D-029 — does
-not call OpenList directly during acquisition.
+IndexCore owns OpenList tree collection. Panta owns the product-side
+`StorageConnection`, `StorageBinding`, projection cursor, and Catalog `Copy`.
+Panta does not read or write the IndexCore database and does not implement a
+second OpenList tree walker.
 
 ## Mapping
 
@@ -32,103 +34,6 @@ Store only an environment-variable name such as
 `PANTA_GATE1_OPENLIST_TOKEN` in the IndexCore adapter configuration. Inject the
 token into the IndexCore process at runtime. Do not persist the token value or
 print it in logs.
-
-## Acquisition observation handoff (Gate 3.8)
-
-After a provider reports download success, Panta does not prove visibility itself.
-It hands the affected directory scope to the IndexCore-owned observation pipeline
-with one trusted Mutation Hint, and then advances its own state only once IndexCore
-has durably accepted that work.
-
-```text
-Manifest AWAITING_VISIBILITY + fenced RUNNING ACQUISITION Job
-        ↓
-root_id   = StorageBinding.indexcore_root_id
-scope_key = Manifest.target_path
-reason    = POSSIBLE_CHANGE
-        ↓
-POST /internal/v1/mutation-hints   (IndexCore, loopback-only, Bearer)
-        ↓
-202 Accepted
-        ↓
-atomic Panta handoff
-Manifest AWAITING_CANONICAL + Job RETRY_WAIT
-```
-
-`AWAITING_VISIBILITY` therefore means: the provider stage is complete and Panta is
-waiting to hand the affected scope to the IndexCore-owned observation pipeline. It
-does not authorize a Panta-to-OpenList stat.
-
-### Four coordinates stay separate
-
-```text
-provider_scope          provider-side mutation target
-openlist_mount_path     IndexCore/OpenList observation configuration
-indexcore_root_id       canonical IndexCore root identity
-manifest.target_path    directory scope inside the selected binding/root
-```
-
-None of these may be derived from another. In particular the Hint never encodes an
-OpenList path, and the OpenList mount and `provider_scope` never influence it.
-
-### Trusted Hint contract
-
-Panta's `indexcore.HintClient` targets IndexCore's accepted P9 transport:
-
-```text
-POST /internal/v1/mutation-hints
-Content-Type: application/json
-Authorization: Bearer <token>
-{"root_id":"root-115-a","scope_key":"/downloads/movies","reason":"POSSIBLE_CHANGE"}
-```
-
-The body is closed: IndexCore decodes it with `DisallowUnknownFields`, so Panta sends
-exactly those three fields. Panta validates `scope_key` against IndexCore's own rule
-before sending — root-absolute, no trailing slash, no backslash, and no empty, `.`
-or `..` component — so a malformed scope fails locally instead of as a remote `400`.
-
-The accepted receipt is `202` with
-`{"status":"accepted","root_id":…,"scope_key":…,"work_state":…,"signal_seq":…}`. Panta
-requires the receipt root and scope to match the submitted Hint exactly. `signal_seq`
-is observation-work metadata; it is never a canonical generation and never a resource
-identity.
-
-Typed failures are distinct so a caller cannot confuse a retryable condition with an
-authorization or protocol error: `400` invalid request, `401` unauthorized, `413`
-request too large, `415` unsupported media type, `429` backpressure (with the remote
-`Retry-After` preserved and never slept on internally), `503` ingest unavailable,
-plus unexpected status, transport failure, and malformed/trailing/oversized response.
-The bearer token is never logged, returned, or embedded in an error.
-
-### Hint acceptance is not canonical truth
-
-`202 Accepted` means only that IndexCore durably ingested "this scope needs
-re-verification". It is not proof the file exists, not Canonical truth, not a
-resource identity, and never a reason to mark a Manifest `READY`. The Manifest is not
-READY and the Job is not `SUCCEEDED` by this handoff.
-
-### At-least-once window
-
-There is an unavoidable window between IndexCore accepting the Hint and Panta
-committing its own handoff. No provider-style side-effect fence is created for it,
-deliberately: an IndexCore Mutation Hint is at-least-once and coalescing, and is not
-authoritative. Resending the same root/scope may advance IndexCore signal metadata,
-but it cannot duplicate a provider download, create Canonical truth, or gain
-destructive authority.
-
-```text
-while Panta is still AWAITING_VISIBILITY   -> a retry may resend the same Hint
-once Panta is AWAITING_CANONICAL+RETRY_WAIT -> exact replay returns Changed=false
-                                               and sends no second Hint
-```
-
-### Boundary
-
-Panta's refresh step depends only on a narrow Hint port plus its existing Manifest,
-Storage, and Job contracts. `internal/integrations/indexcore` owns the concrete HTTP
-client and may not import acquisition, jobs, store, providers, search, agent, auth,
-or IndexCore's internal Go packages. There is no Panta-to-OpenList production HTTP
-client in this flow.
 
 ## Controlled Gate 1 acceptance
 
@@ -157,17 +62,95 @@ Q5, Q8 and `ProjectOnce`. It verifies initial projection, identical-scan
 idempotency, and one additive resource.
 
 OpenList collection is additive-safe in this gate: absence is not proof of
-deletion. The Gate 3.8 observation handoff above is the accepted extension that
-replaces post-download visibility verification. Later gates add canonical
-confirmation through IndexCore Query/Journal, `ProjectOnce`, and only then `READY`.
+deletion.
 
-## Deployment precondition
+For acquisition, D-029 keeps this ownership boundary unchanged: Panta does not
+add a direct OpenList visibility-verification lane. After provider completion,
+Panta sends a trusted Mutation Hint to IndexCore using the binding's
+`indexcore_root_id` and the Manifest's `target_path`; IndexCore then performs
+the OpenList-backed scoped verification and produces Canonical/Journal evidence.
+
+Those Gate 3 control-plane handoff capabilities are not part of Gate 1.
+
+## Trusted Mutation Hint transport contract
+
+This section records the exact wire contract the Gate 3.8 handoff implements. It
+does not change ownership: IndexCore still performs the OpenList-backed scoped
+verification and produces Canonical/Journal evidence.
+
+### Hint request
+
+```text
+POST /internal/v1/mutation-hints
+Content-Type: application/json
+Authorization: Bearer <token>
+{"root_id":"root-115-a","scope_key":"/downloads/movies","reason":"POSSIBLE_CHANGE"}
+```
+
+The body is closed. IndexCore decodes it with `DisallowUnknownFields`, so Panta sends
+exactly those three fields. `scope_key` is validated against IndexCore's own rule
+before sending — root-absolute, no trailing slash, no backslash, and no empty, `.`
+or `..` component — so a malformed scope fails locally instead of as a remote `400`.
+
+### Accepted receipt
+
+```text
+202 {"status":"accepted","root_id":…,"scope_key":…,"work_state":…,"signal_seq":…}
+```
+
+Panta requires the receipt root and scope to match the submitted Hint exactly.
+`signal_seq` is observation-work metadata: it is never a canonical generation and
+never a resource identity.
+
+### Typed failures
+
+Distinct, so a caller cannot confuse a retryable condition with an authorization or
+protocol error:
+
+```text
+400 invalid request      401 unauthorized        413 request too large
+415 unsupported type     429 backpressure        503 ingest unavailable
+unexpected status        transport failure       malformed / trailing / oversized
+```
+
+A `429` preserves IndexCore's `Retry-After` for the caller and never sleeps on it
+internally. A non-JSON body still classifies by status rather than becoming a
+malformed-response error. The bearer token is never logged, returned, or embedded in
+an error.
+
+### Handoff and at-least-once window
+
+Once IndexCore durably accepts the Hint, Panta atomically advances the same Manifest
+and Job:
+
+```text
+Manifest AWAITING_VISIBILITY -> AWAITING_CANONICAL
+Job      RUNNING             -> RETRY_WAIT
+lease cleared, next_attempt_at = RetryAt, finished_at NULL
+claim generation and failure budget unchanged
+```
+
+No second Job is created. Hint acceptance never marks the Job `SUCCEEDED` and never
+marks the Manifest `READY`.
+
+Between the `202` and Panta's commit there is an unavoidable window, and no
+provider-style side-effect fence is created for it, deliberately: an IndexCore
+Mutation Hint is at-least-once and coalescing and is not authoritative, so replaying
+the same root/scope cannot duplicate a provider download, create Canonical truth, or
+gain destructive authority.
+
+```text
+while Panta is still AWAITING_VISIBILITY     -> a retry may resend the same Hint
+once Panta is AWAITING_CANONICAL + RETRY_WAIT -> exact replay Changed=false, no second Hint
+```
+
+### Deployment precondition
 
 Automatic scoped verification requires IndexCore to run with its accepted Hint
 transport and incremental runtime enabled. Panta does not own or reimplement that
 worker. If the Hint endpoint accepts work while the IndexCore runtime is disabled,
 Panta still must not bypass IndexCore by calling OpenList: canonical confirmation
-simply remains pending until the IndexCore execution path runs.
+remains pending until the IndexCore execution path runs.
 
 The Hint listener is literal-loopback-only on IndexCore's side. For MVP deployment
 Panta's backend process must be colocated within the same trusted loopback network

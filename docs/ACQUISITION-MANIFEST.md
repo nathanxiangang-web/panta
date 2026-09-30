@@ -245,9 +245,12 @@ FAILED            -> PROVIDER_FAILED
 CANCELED          -> PROVIDER_CANCELED
 ```
 
-Provider success is not Manifest `READY`. `READY` still requires OpenList
-visibility, canonical confirmation, and Copy mutation, none of which Gate 3.4
-performs. An empty or invalid returned task reference and an unknown provider task
+Provider success is not Manifest `READY`. After provider success, Panta hands
+the affected root/scope to the **IndexCore-owned observation pipeline** through a
+trusted Mutation Hint. IndexCore performs the OpenList-backed scoped verification.
+`READY` still requires canonical IndexCore Query/Journal evidence plus the
+corresponding Copy projection/association. Panta does not directly verify OpenList
+during acquisition. An empty or invalid returned task reference and an unknown provider task
 state both fail closed.
 
 ## Uncertain external side effects
@@ -514,52 +517,40 @@ pre-10 counter starts with a fresh failure budget, because that counter never
 measured failures. Only generation is preserved, since only generation has a
 fencing meaning that must stay monotonic.
 
-## IndexCore observation handoff (Gate 3.8)
-
-`AWAITING_VISIBILITY` means the provider stage is complete and Panta is waiting to
-hand the affected directory scope to the IndexCore-owned OpenList observation
-pipeline. Per D-029, Panta does not verify OpenList itself:
-
-```text
-Storage -> OpenList -> IndexCore Collector -> Canonical + Journal -> Panta
-```
-
-The handoff submits one trusted IndexCore Mutation Hint for the exact root and scope:
-
-```text
-root_id   = StorageBinding.indexcore_root_id
-scope_key = Manifest.target_path
-reason    = POSSIBLE_CHANGE
-```
-
-`provider_scope` and `openlist_mount_path` deliberately do not participate. Once
-IndexCore durably accepts that Hint, `acquisition.RefreshStep` atomically advances the
-same Manifest and Job:
-
-```text
-Manifest AWAITING_VISIBILITY -> AWAITING_CANONICAL
-Job      RUNNING             -> RETRY_WAIT
-lease cleared, next_attempt_at = RetryAt, finished_at NULL
-claim generation and failure budget unchanged
-```
-
-No second Job is created. Hint acceptance never marks the Job `SUCCEEDED` and never
-marks the Manifest `READY`: `202 Accepted` is only durable verification-work ingress,
-not Canonical truth.
-
-An exact already-committed handoff replays with `Changed=false` and sends no second
-Hint. While Panta is still `AWAITING_VISIBILITY`, a retry may resend the same Hint:
-IndexCore Mutation Hints are at-least-once and coalescing, so a replay cannot
-duplicate a provider download or create Canonical truth. No provider-style
-side-effect fence is created for this window.
-
-See `docs/OBSERVATION-INTEGRATION.md` for the Hint wire contract, the typed failure
-set, and the loopback deployment precondition.
-
 ## Deferred capabilities
 
-Source Resolver/provider syntax normalization, the Job worker loop, IndexCore Q5 /
-Journal canonical confirmation, Copy/Projector completion orchestration, the READY
-transition, OpenList access/302 resolution, auth/quota, and API/UI are separately
-authorized later work. A real secret backend, the 115 ShareProvider, and
+Source Resolver/provider syntax normalization, the Job worker loop, trusted
+IndexCore Mutation Hint / observation handoff, the AWAITING_CANONICAL transition,
+canonical READY confirmation, auth/quota, and API/UI are separately authorized
+later work. Direct Panta -> OpenList acquisition verification is not a planned
+stage; D-029 keeps OpenList observation owned by IndexCore. A real secret backend, the 115 ShareProvider, and
 115-specific retry policy are also deferred.
+
+
+## Acquisition observation ownership correction
+
+D-029 is authoritative for post-provider observation:
+
+```text
+provider succeeds
+    ↓
+Manifest AWAITING_VISIBILITY
+    ↓
+Panta -> IndexCore trusted Mutation Hint
+    ↓
+IndexCore-owned OpenList scoped verification
+    ↓
+IndexCore Canonical + Journal
+    ↓
+Panta confirmation / Copy projection
+```
+
+The Manifest's `target_path` is used as the IndexCore mutation-hint
+`scope_key` together with the binding's `indexcore_root_id`.
+
+Do not derive this Hint from:
+- `provider_scope`;
+- `openlist_mount_path`;
+- provider task reference.
+
+A direct Panta OpenList visibility client is not part of the acquisition flow.

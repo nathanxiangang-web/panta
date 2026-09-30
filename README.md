@@ -23,13 +23,14 @@ Panta v0.1 must prove five things:
 1. Existing resources can be observed through **OpenList → IndexCore → Panta Catalog**.
 2. A user who already knows a path can browse/resolve it directly; **search is optional, not mandatory**.
 3. Logical resource identity is separated from physical files through **Asset → Release → Variant → Copy**.
-4. A logged-in user can submit a supported source to the **115 cloud-download provider**, after which Panta verifies OpenList visibility, triggers IndexCore scoped refresh, and exposes the new Copy without a full scan.
+4. A logged-in user can submit a supported source to the **115 cloud-download provider**, after which Panta sends a trusted scoped Mutation Hint to IndexCore; IndexCore performs the OpenList-backed scoped verification and Panta waits for canonical Query/Journal evidence before the new Copy becomes READY.
 5. Provider-specific logic is replaceable. Panta domain modules must not depend directly on 115 semantics.
 
 ## Architecture rules
 
-- OpenList is the storage observation/access layer, not the product database.
+- OpenList is the upstream storage observation/access layer used by IndexCore, not the product database.
 - IndexCore is the canonical physical-resource truth, not the product catalog or search engine.
+- Panta acquisition does not directly query OpenList to decide visibility; it sends trusted Mutation Hints to IndexCore and consumes IndexCore Query/Journal truth.
 - Panta Catalog owns Asset / Release / Variant / Copy semantics.
 - Provider actions go through provider contracts and the Job Engine.
 - Agent output is advisory/structured input; agents do not own product state.
@@ -39,6 +40,8 @@ Panta v0.1 must prove five things:
 
 ## Project documents
 
+- [AI Developer Entry Point](AGENTS.md) — mandatory repository entry for coding/review agents
+- [AI Architecture Memory](docs/AI-ARCHITECTURE-MEMORY.md) — read first for current invariants / anti-drift rules
 - [MVP Blueprint](docs/MVP-BLUEPRINT.md)
 - [Project Context](PROJECT-CONTEXT.md)
 - [Project State](PROJECT-STATE.md)
@@ -81,8 +84,10 @@ cmd/panta → internal/app → modules and Panta-owned ports
 - `catalog`, `resourceview`, `acquisition`, and `jobs` own product behavior.
 - `providers/contracts` owns provider-neutral ports; `providers/registry` binds
   implementations only at the composition boundary.
-- `integrations/indexcore` and `integrations/openlist` are Panta-owned external
-  service ports. They expose no upstream database or implementation types.
+- `integrations/indexcore` is the production physical-truth integration boundary.
+  Any `integrations/openlist` port is access-layer/future capability only unless a
+  separate Gate explicitly authorizes it; acquisition observation remains owned by
+  IndexCore and must not grow a second Panta → OpenList verification lane.
 - In-memory doubles live only in tests. There is no real provider, persistence,
   network integration, search, agent, authentication, HTTP API, or UI in Gate
   0.1.
@@ -296,3 +301,24 @@ CopyID on conflict.
 
 Gate 1.3 deliberately adds no polling loop, scheduler, OpenList client,
 Mutation Hint, classification, provider execution, API, or UI.
+
+
+## AI / Architect preflight
+
+Before planning or reviewing any Gate, reconstruct project truth from Git in this order:
+
+```text
+docs/AI-ARCHITECTURE-MEMORY.md
+        ↓
+PROJECT-STATE.md
+        ↓
+docs/DECISIONS.md
+        ↓
+PROJECT-CONTEXT.md / docs/MVP-BLUEPRINT.md
+        ↓
+current Issue / PR
+        ↓
+exact code + tests + CI
+```
+
+Chat context is not authoritative when it conflicts with current Git. Newer explicit accepted decisions supersede older design prose, Issues, PR descriptions, and historical assumptions.
