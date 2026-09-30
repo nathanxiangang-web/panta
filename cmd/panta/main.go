@@ -2,30 +2,56 @@ package main
 
 import (
 	"context"
+	"errors"
 	"log"
+	"os"
 	"os/signal"
 	"syscall"
 
 	"github.com/nathanxiangang-web/panta/internal/app"
 	"github.com/nathanxiangang-web/panta/internal/platform/config"
+	"github.com/nathanxiangang-web/panta/internal/platform/operator"
 )
 
 func main() {
-	cfg, err := config.Load()
-	if err != nil {
-		log.Fatalf("load configuration: %v", err)
+	if err := run(os.Args[1:]); err != nil {
+		log.Printf("panta stopped: %v", err)
+		os.Exit(1)
 	}
+}
 
-	application, err := app.New(cfg)
-	if err != nil {
-		log.Fatalf("initialize application: %v", err)
-	}
-
+func run(args []string) error {
 	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
 	defer stop()
+	return runWithContext(ctx, args)
+}
+
+func runWithContext(ctx context.Context, args []string) error {
+	if len(args) > 1 {
+		return operator.ErrInvalidAction
+	}
+	if len(args) == 1 && args[0] != string(operator.Preflight) && args[0] != string(operator.Start) {
+		return operator.ErrInvalidAction
+	}
+	cfg, err := config.Load()
+	if err != nil {
+		return errors.New("invalid process configuration")
+	}
+	if len(args) == 1 {
+		err := operator.Run(ctx, operator.Action(args[0]), cfg, os.Getenv("PANTA_ACQUISITION_BOOTSTRAP_FILE"), nil)
+		if err != nil {
+			return err
+		}
+		if args[0] == string(operator.Preflight) {
+			log.Print("acquisition preflight OK")
+		}
+		return nil
+	}
+	application, err := app.New(cfg)
+	if err != nil {
+		return err
+	}
 
 	log.Printf("panta started environment=%s", cfg.Environment)
-	if err := application.Run(ctx); err != nil {
-		log.Fatalf("run application: %v", err)
-	}
+	return application.Run(ctx)
 }
