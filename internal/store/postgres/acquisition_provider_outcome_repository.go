@@ -193,6 +193,13 @@ func resolveResultNameForSuccess(
 // isCommittedOutcome reports whether the durable records already hold exactly the
 // outcome this plan would commit. Both halves of the D-026 pairing must match, so
 // a different proposed outcome after a committed one still fails closed.
+//
+// For a provider success the plan must also agree on the durable locator. The replay
+// branch returns before the fresh path can apply the D-032 immutability rule, so a
+// committed AWAITING_VISIBILITY pair replayed with a DIFFERENT provider-observed name
+// would otherwise be silently reported as an idempotent no-op instead of failing
+// closed. A blank or absent provider name carries no new evidence and is therefore
+// never a conflict.
 func (repository *ProviderOutcomeRepository) isCommittedOutcome(
 	manifest acquisition.Manifest,
 	job jobs.Job,
@@ -211,7 +218,27 @@ func (repository *ProviderOutcomeRepository) isCommittedOutcome(
 	if err := acquisition.ValidateLinkedAcquisitionJob(manifest.ID, job); err != nil {
 		return false, fmt.Errorf("%w: %w", acquisition.ErrProviderOutcomeJobMismatch, err)
 	}
+	if plan.Outcome == acquisition.ProviderOutcomeSucceeded {
+		if err := verifyCommittedLocator(manifest, plan); err != nil {
+			return false, err
+		}
+	}
 	return true, nil
+}
+
+// verifyCommittedLocator proves a replayed provider success agrees with the durable
+// acquired-result locator. It applies the same rule as the fresh path through
+// acquisition.ResolveResultName, so replay and fresh handoff share one decision table.
+func verifyCommittedLocator(manifest acquisition.Manifest, plan acquisition.ProviderOutcomePlan) error {
+	providerResult := acquisition.ProviderResultNameFromStatus(plan.ProviderResultName)
+	if providerResult == nil {
+		// No new evidence: the persisted locator stands.
+		return nil
+	}
+	if _, _, err := acquisition.ResolveResultName(manifest.ResultName, providerResult, manifest.ExpectedName); err != nil {
+		return err
+	}
+	return nil
 }
 
 // mutateJobForOutcome applies the D-026 Job semantics under the claim-generation

@@ -250,7 +250,7 @@ func applyIntegrationMigrations(t *testing.T, ctx context.Context, pool *pgxpool
 	}
 }
 
-// activationExpectedName supplies the D-031 frozen identity for the states that
+// activationExpectedName supplies request intent for the states that
 // require one, and nil for the earlier states that must not carry one.
 func activationExpectedName(state acquisition.State) *string {
 	switch state {
@@ -267,7 +267,7 @@ func seedActivationManifest(t *testing.T, ctx context.Context, repository *Acqui
 	manifest := acquisition.Manifest{
 		ID: id, SourceType: "opaque", SourceRef: "opaque://source", TargetStorageBindingID: bindingID,
 		TargetPath: "/downloads/item", JobID: jobID, State: state, CreatedAt: now, UpdatedAt: now,
-		// Gate 3.9 D-031: any Manifest that has left the provider stage carries a
+		// Gate 3.9 D-032: request intent is seeded as ordinary fixture data; a Manifest
 		// frozen direct-child identity, so this seed stays a valid later-state row and
 		// the test keeps proving only the activation-state rejection.
 		ExpectedName: activationExpectedName(state),
@@ -284,7 +284,7 @@ func seedCorruptActivationManifest(t *testing.T, ctx context.Context, pool *pgxp
 	manifest := acquisition.Manifest{
 		ID: id, SourceType: "opaque", SourceRef: "opaque://source", TargetStorageBindingID: bindingID,
 		TargetPath: "/downloads/item", JobID: jobID, State: state, CreatedAt: now, UpdatedAt: now,
-		// Gate 3.9 D-031: keep the row a valid later-state shape so this seed exercises
+		// Gate 3.9 D-032: keep the row a realistic shape so this seed exercises
 		// only the corrupt link it is meant to exercise.
 		ExpectedName: activationExpectedName(state),
 	}

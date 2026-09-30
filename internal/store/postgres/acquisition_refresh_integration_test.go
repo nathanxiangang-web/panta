@@ -74,8 +74,8 @@ INSERT INTO jobs (
 	); err != nil {
 		t.Fatalf("seed RUNNING ACQUISITION job: %v", err)
 	}
-	// D-031: a Manifest that has left the provider stage must carry its frozen
-	// direct-child identity, so every later-state seed supplies one.
+	// D-032: a later-state Manifest may carry request intent as ordinary fixture
+	// data. The Gate 3.8 handoff does not require it.
 	expectedName := "acquired-item.bin"
 	if _, err := pool.Exec(ctx, `
 INSERT INTO acquisition_manifests (

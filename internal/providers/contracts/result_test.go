@@ -1,6 +1,6 @@
 package contracts_test
 
-// Gate 3.9 (issue #41) provider-contract tests for D-031 acquired-result
+// Gate 3.9 (issue #42) provider-contract tests for the D-032 acquired-result
 // identity: the provider-neutral contract carries exactly one direct-child name,
 // the name validator matches the acquisition domain rule, and no provider
 // addressing leaks into the contract.

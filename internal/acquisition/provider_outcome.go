@@ -130,7 +130,7 @@ type ProviderOutcomePlan struct {
 	RetryAt       *time.Time
 	ErrorMessage  *string
 	// ProviderResultName is the optional provider-reported direct-child name carried
-	// into the D-031 expected-name resolution.
+	// into the D-032 result-locator resolution.
 	ProviderResultName *string
 }
 

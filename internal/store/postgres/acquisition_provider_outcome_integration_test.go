@@ -142,7 +142,7 @@ func providerOutcomeRequest(fixture providerOutcomeFixture, outcome acquisition.
 		request.ErrorMessage = &message
 	}
 	if outcome == acquisition.ProviderOutcomeSucceeded {
-		// D-031: a provider success supplies the acquired direct-child name.
+		// D-032: a provider success supplies the observed result locator.
 		resultName := providerOutcomeResultName
 		request.ProviderResultName = &resultName
 	}

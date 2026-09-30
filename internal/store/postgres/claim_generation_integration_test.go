@@ -29,10 +29,10 @@ func providerOutcomeSuccessRequest(fixture providerOutcomeFixture, generation in
 	}
 	retryAt := now
 	request.RetryAt = &retryAt
-	// D-031: a provider success must supply the acquired direct-child identity when
+	// D-032: a provider success supplies the observed acquired-result locator.
 	// the Manifest has not frozen one yet.
-	resultName := "acquired-item.bin"
-	request.ProviderResultName = &resultName
+	observedName := "acquired-item.bin"
+	request.ProviderResultName = &observedName
 	return request
 }
 

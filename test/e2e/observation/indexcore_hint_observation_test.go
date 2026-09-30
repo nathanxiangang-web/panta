@@ -85,9 +85,9 @@ const (
 
 	hintE2EOwner = "gate38-hint-lease-owner"
 
-	// Gate 3.9 D-031: the frozen acquired direct-child identity the Gate 3.8 handoff
-	// now requires before it may submit a Hint. It is deliberately not sent in the
-	// Hint: IndexCore still refreshes the containing directory.
+	// Request intent seeded as ordinary fixture data. D-032 keeps the Handoff
+	// scoped only by indexcore_root_id + target_path, so neither this name nor the
+	// locator is sent in the Hint.
 	hintE2EExpectedName = "acquired-item.bin"
 )
 
@@ -842,8 +842,8 @@ func newHintE2EFixture() *hintE2EFixture {
 			SourceRef:              "opaque-provider-ref",
 			TargetStorageBindingID: hintE2EBindingID,
 			TargetPath:             hintE2ETargetPath,
-			// Gate 3.9 D-031: the frozen direct-child identity the Gate 3.8 handoff
-			// now requires before it may submit a Hint.
+			// D-032: request intent, carried as ordinary fixture data.
+			// (identity is not required by the handoff)
 			ExpectedName: hintNamePointer(hintE2EExpectedName),
 			JobID:        &jobID,
 			State:        acquisition.StateAwaitingVisibility,
@@ -898,9 +898,9 @@ INSERT INTO jobs (
 		*fixture.job.LeaseOwner); err != nil {
 		t.Fatalf("seed ACQUISITION Job: %v", err)
 	}
-	// Gate 3.9 (D-031): an AWAITING_VISIBILITY Manifest must carry its frozen
-	// direct-child identity, and the Gate 3.8 handoff requires it, so the fixture
-	// seeds the exact name the provider stage would have frozen.
+	// D-032: request intent is seeded as fixture data. The Gate 3.8 handoff does
+	// not require it, but a realistic AWAITING_VISIBILITY row is seeded with
+	// request intent.
 	if _, err := pool.Exec(ctx, `
 INSERT INTO acquisition_manifests (
     manifest_id, user_id, source_type, source_ref, expected_name, target_storage_binding_id,

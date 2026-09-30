@@ -14,7 +14,7 @@ import (
 )
 
 // ---------------------------------------------------------------------------
-// D-031 acquired-result identity: 115 adapter result-name coverage (tests 5-8).
+// D-032 acquired-result locator: 115 adapter result-name coverage.
 //
 // These tests drive only the adapter's public boundary. They reuse the package's
 // existing fakeBackend / newAdapter / OfflineTask / OfflineTaskPage helpers from
