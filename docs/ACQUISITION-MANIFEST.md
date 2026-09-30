@@ -514,10 +514,52 @@ pre-10 counter starts with a fresh failure budget, because that counter never
 measured failures. Only generation is preserved, since only generation has a
 fencing meaning that must stay monotonic.
 
+## IndexCore observation handoff (Gate 3.8)
+
+`AWAITING_VISIBILITY` means the provider stage is complete and Panta is waiting to
+hand the affected directory scope to the IndexCore-owned OpenList observation
+pipeline. Per D-029, Panta does not verify OpenList itself:
+
+```text
+Storage -> OpenList -> IndexCore Collector -> Canonical + Journal -> Panta
+```
+
+The handoff submits one trusted IndexCore Mutation Hint for the exact root and scope:
+
+```text
+root_id   = StorageBinding.indexcore_root_id
+scope_key = Manifest.target_path
+reason    = POSSIBLE_CHANGE
+```
+
+`provider_scope` and `openlist_mount_path` deliberately do not participate. Once
+IndexCore durably accepts that Hint, `acquisition.RefreshStep` atomically advances the
+same Manifest and Job:
+
+```text
+Manifest AWAITING_VISIBILITY -> AWAITING_CANONICAL
+Job      RUNNING             -> RETRY_WAIT
+lease cleared, next_attempt_at = RetryAt, finished_at NULL
+claim generation and failure budget unchanged
+```
+
+No second Job is created. Hint acceptance never marks the Job `SUCCEEDED` and never
+marks the Manifest `READY`: `202 Accepted` is only durable verification-work ingress,
+not Canonical truth.
+
+An exact already-committed handoff replays with `Changed=false` and sends no second
+Hint. While Panta is still `AWAITING_VISIBILITY`, a retry may resend the same Hint:
+IndexCore Mutation Hints are at-least-once and coalescing, so a replay cannot
+duplicate a provider download or create Canonical truth. No provider-style
+side-effect fence is created for this window.
+
+See `docs/OBSERVATION-INTEGRATION.md` for the Hint wire contract, the typed failure
+set, and the loopback deployment precondition.
+
 ## Deferred capabilities
 
-Source Resolver/provider syntax normalization, the Job worker loop, OpenList
-visibility verification, Mutation Hint/scoped refresh, the AWAITING_CANONICAL
-transition, canonical READY confirmation, auth/quota, and API/UI are separately
+Source Resolver/provider syntax normalization, the Job worker loop, IndexCore Q5 /
+Journal canonical confirmation, Copy/Projector completion orchestration, the READY
+transition, OpenList access/302 resolution, auth/quota, and API/UI are separately
 authorized later work. A real secret backend, the 115 ShareProvider, and
 115-specific retry policy are also deferred.
