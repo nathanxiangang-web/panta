@@ -3,8 +3,8 @@
 > Canonical short-form project memory for Architect/AI sessions.
 >
 > Last architecture-memory synchronization: **2026-10-01**
-> Active Gate: **3.17 / Issue #58 — Deterministic Source Resolver and acquisition submission boundary**
-> Governing corrections: **D-029** (IndexCore-owned observation), **D-030** (Git-first AI reconstruction), **D-032** (durable result_name locator), **D-033** (READY anchored to one canonical projected Copy), **D-034** (one-claim stage routing), **D-035** (type-scoped claiming and atomic recovery), **D-036** (one explicit runner tick), **D-037** (opt-in worker lifecycle), **D-038** (fail-closed runtime graph and secret/trust boundaries), **D-039** (protected operator bootstrap/preflight), and **D-040** (deterministic source intake with exact value preservation).
+> Active Gate: **3.18 / Issue #60 — Human-authorized real 115 + OpenList + IndexCore staging E2E**
+> Governing corrections: **D-029** (IndexCore-owned observation), **D-030** (Git-first AI reconstruction), **D-032** (durable result_name locator), **D-033** (READY anchored to one canonical projected Copy), **D-034** (one-claim stage routing), **D-035** (type-scoped claiming and atomic recovery), **D-036** (one explicit runner tick), **D-037** (opt-in worker lifecycle), **D-038** (fail-closed runtime graph and secret/trust boundaries), **D-039** (protected operator bootstrap/preflight), **D-040** (deterministic source intake with exact value preservation), and **D-041** (human-authorized live staging acceptance without architectural bypass).
 >
 > **Read this file before planning, reviewing, or authorizing any new Gate.**
 >
@@ -313,7 +313,39 @@ Do not trim, truncate, rebuild magnet query parameters, percent-reencode, strip 
 
 Submission composes the already accepted Manifest creation and activation services. Stable IDs/idempotency must make replay deterministic; an activation failure leaves explicit PENDING intent rather than hidden cleanup. Submission itself never starts the worker or crosses a provider/network side-effect boundary.
 
-Real 115/OpenList/IndexCore staging acceptance remains separately gated until Gate 3.17 is accepted.
+Gate 3.17 is accepted.
+
+## 5.10 Human-authorized real staging acceptance
+
+D-041 / Gate 3.18 authorizes one bounded **operator-run staging validation**, not a new product architecture.
+
+Pinned external IndexCore baseline:
+
+```text
+v0.4.0-alpha.1
+6f0eec85c59bd8cbe55011b0d9e512e0cafd6615
+```
+
+The staging path is:
+
+```text
+Panta protected submission
+  -> real 115 provider mutation
+  -> provider result_name
+  -> trusted loopback IndexCore Mutation Hint
+  -> IndexCore hybrid incremental runtime
+  -> IndexCore OpenList collector
+  -> Canonical + Journal
+  -> Panta Q5/Q8 Projector
+  -> exact PRESENT Copy
+  -> READY + result_copy_id + Job SUCCEEDED
+```
+
+Panta still never queries OpenList for acquisition truth. Provider success and Hint 202 remain non-terminal. Because IndexCore's accepted Hint listener is literal-loopback-only, Panta and IndexCore share one host/network namespace for this acceptance rather than weakening trust for separate containers.
+
+Real secrets stay outside Git/chat/reporting. CI/AI must not use the real account. A human explicitly starts the worker. If START_RESERVED becomes uncertain, stop and preserve evidence; never force another StartDownload.
+
+Acceptance uses bounded polling of durable state and IndexCore Query/Journal, not blind sleep. A failure is diagnostic evidence, not permission to bypass D-029/D-033 or add a second observer.
 
 ## 6. Job Engine invariants
 
@@ -442,17 +474,18 @@ Accepted:
 - Gate 3.14 — opt-in serial acquisition worker lifecycle
 - Gate 3.15 — fail-closed runtime composition and controlled PostgreSQL+HTTP E2E
 - Gate 3.16 — protected operator bootstrap, read-only preflight and explicit worker startup
+- Gate 3.17 — deterministic Source Resolver and acquisition submission
 
 Authorized now:
-- **Gate 3.17 — Issue #58 — Deterministic Source Resolver and acquisition submission boundary**
+- **Gate 3.18 — Issue #60 — Human-authorized real 115 + OpenList + IndexCore staging E2E**
 
 Not authorized yet:
 - direct Panta OpenList acquisition verifier;
 - direct acquisition Copy creation/upsert;
-- real 115/OpenList/IndexCore live-account acceptance, production deployment, public API/UI, and Gate 3.18+ work;
+- production deployment, public API/UI, or Gate 4+ implementation before Gate 3.18 closeout;
+- weakening IndexCore loopback Hint trust to accommodate deployment topology;
 - provider-specific source rewriting/truncation without a new decision;
-- API/UI;
-- auth/quota/share;
+- auth/quota/share/access/usage;
 - Agent implementation;
 - generalized workflows/microservices/distributed queue.
 

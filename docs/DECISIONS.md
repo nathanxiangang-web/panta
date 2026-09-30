@@ -997,3 +997,26 @@ Rules:
 
 Gate 3.17 / Issue #58 implements and proves this boundary. Human-authorized real 115/OpenList/IndexCore staging acceptance remains a later separate gate.
 
+## D-041 — Human-authorized real staging validates accepted ownership without bypass
+
+**Status:** Accepted
+
+Gate 3.17 completes deterministic source intake, so the intended acquisition path can now be validated without hand-seeding product state. Gate 3.18 authorizes one staging-only real-account acceptance under explicit human operation.
+
+Rules:
+- live provider mutation is never a CI/AI action; the human operator explicitly invokes the accepted worker start;
+- use IndexCore `v0.4.0-alpha.1` at commit `6f0eec85c59bd8cbe55011b0d9e512e0cafd6615` as the fixed external baseline for this acceptance;
+- IndexCore's accepted trusted Hint listener stays literal-loopback-only with >=32-byte token and the P10/P11 hybrid incremental runtime enabled;
+- Panta and IndexCore share the same host/network namespace for this staging acceptance rather than weakening Hint trust;
+- OpenList remains exclusively an IndexCore collector dependency; Panta never calls OpenList or its DB to establish acquisition visibility;
+- preserve coordinate separation among provider_scope, OpenList collector/mount configuration, indexcore_root_id and Manifest.target_path;
+- use a dedicated staging 115 target and small non-sensitive operator-controlled HTTPS test object; never publish the full source URL or credentials in Git/chat/evidence;
+- preflight must remain non-mutating, submission enqueue-only, and StartDownload may occur only after explicit worker start;
+- provider success and Hint 202 are intermediate evidence only; PASS requires exact Q5 PRESENT canonical resource, Q8/Projector evidence, Panta result_copy_id + READY and same Job SUCCEEDED;
+- use bounded polling/deadlines, not fixed sleep as proof;
+- START_RESERVED uncertainty, Q5 ambiguity, mapping mismatch, recovery debt or secret disclosure are STOP conditions, not reasons to force retries or bypass accepted owners;
+- capture only redacted operator evidence and preserve durable failure states for diagnosis;
+- no production deployment topology, API/UI, auth/quota/share, Agent, second scheduler, direct IndexCore DB access, second Copy writer or direct Panta OpenList verifier is authorized.
+
+Gate 3.18 / Issue #60 may add only staging harness/runbook/evidence scaffolding unless the real run exposes a genuine accepted-contract defect. Such a defect must be reviewed explicitly before production code is changed.
+

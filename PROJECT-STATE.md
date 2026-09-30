@@ -6,7 +6,7 @@
 
 **MVP implementation — Gate 3**
 
-Gate 0, Gate 1, and Gate 2 are formally accepted and closed. Gate 3.1 through Gate 3.16 are accepted and merged. Gate 3.17 is authorized and in progress.
+Gate 0, Gate 1, and Gate 2 are formally accepted and closed. Gate 3.1 through Gate 3.17 are accepted and merged. Gate 3.18 is authorized and in progress.
 
 ## Accepted baseline
 
@@ -822,9 +822,9 @@ Until the relevant gate is accepted, do not implement:
 
 ## Next architect action
 
-Review the future Gate 3.17 PR against **Issue #58 / D-040**: deterministic supported-source classification, exact source-value preservation, no network work during resolution/submission, reuse of existing Manifest creation + activation services, safe replay/partial PENDING activation semantics, no source-bearing logs, no schema change, and exact-head CI.
+Review Gate 3.18 staging harness/runbook and the human-operated real-account evidence against **Issue #60 / D-041**. Preserve the accepted provider/observation split: Panta may mutate 115 through its provider adapter and send the trusted loopback Hint, but only IndexCore's OpenList collector + Canonical/Journal may establish physical truth. Require exact state-transition evidence through READY, clean shutdown, and redacted secrets/source.
 
-Do not authorize real 115/OpenList/IndexCore account acceptance, production deployment or Gate 3.18 until Gate 3.17 is accepted.
+Do not authorize production deployment, Gate 4 implementation, public API/UI or any architectural workaround merely because a staging run fails.
 
 ## Current bounded task
 
@@ -1074,18 +1074,51 @@ Deferred: real 115 account download/external acceptance, deployment/image/HA, So
 
 ### Gate 3.17 — Deterministic Source Resolver and acquisition submission boundary
 
-Status: **AUTHORIZED / IN PROGRESS**
+Status: **ACCEPTED**
 
-Tracking: GitHub Issue #58
+Tracking: GitHub Issue #58 / PR #59
+
+Merged:
+- reviewed exact HEAD `6bf5e823a4035a36fa2d994a4e161ce5675529f7`;
+- squash commit `f567b9061e07cd2750acc429a5f9d08e3d0459e7`;
+- Architect acceptance comment `5919442131`;
+- exact-head CI run `36774601575` all three jobs SUCCESS;
+- post-merge main run `36775002649` SUCCESS;
+- schema unchanged at v12.
+
+Acceptance evidence:
+- deterministic magnet/http/https/ed2k classification with exact source-value preservation and no network IO;
+- HTTP(S) userinfo/malformed source rejection and no provider-specific source rewriting;
+- bounded SubmissionService reuses Manifest creation + ActivationService with stable IDs and linked ACQUISITION idempotency;
+- activation rollback leaves visible PENDING intent and zero half-created Jobs; retry/replay is deterministic;
+- PostgreSQL integration proves Manifest.source_ref reaches ExecutionInput unchanged;
+- protected-file CLI is enqueue-only, does not load provider credentials/start the worker, and redacts source values;
+- no schema migration, API/UI, real provider/OpenList/IndexCore mutation, Agent or deployment change.
 
 Governing decision: D-040.
 
-Scope:
-- support deterministic `magnet`, `http`, `https`, and `ed2k` source classification/validation without network IO;
-- derive normalized source type while preserving the exact accepted source value byte-for-byte into Manifest and DownloadRequest;
-- reject malformed/unknown/secret-bearing HTTP userinfo inputs; do not trim/truncate/re-encode magnet parameters;
-- compose existing Manifest creation + ActivationService through one bounded submission service with stable IDs and explicit replay/PENDING-activation semantics;
-- provide a non-network staging/test submission entrypoint that enqueues only and never implicitly starts the Gate 3.16 worker;
-- no schema migration expected.
+## Current bounded task
 
-Deferred: real 115/OpenList/IndexCore live acceptance, provider-specific source rewriting, auth/quota/access/share, public API/UI, Agent and production deployment.
+### Gate 3.18 — Human-authorized real 115 + OpenList + IndexCore staging E2E
+
+Status: **AUTHORIZED / IN PROGRESS**
+
+Tracking: GitHub Issue #60
+
+Governing decision: D-041.
+
+External baseline:
+- IndexCore `v0.4.0-alpha.1`;
+- IndexCore commit `6f0eec85c59bd8cbe55011b0d9e512e0cafd6615`;
+- accepted OpenList collector + P9 loopback Hint + opt-in P10/P11 hybrid incremental runtime.
+
+Scope:
+- prepare a redacted staging harness/runbook without changing accepted production semantics;
+- run Panta and IndexCore in the same host/network namespace for the literal-loopback Hint trust boundary;
+- use one dedicated real 115 staging destination and real OpenList-backed IndexCore root;
+- Panta preflight remains non-mutating; submission enqueues exactly one durable pair; explicit operator start performs the real provider mutation;
+- prove provider -> Hint -> IndexCore OpenList observation -> Q5/Q8 -> Panta Projector -> READY/result_copy_id/Job SUCCEEDED;
+- retain durable failure/recovery evidence; never bypass IndexCore or clear START_RESERVED to force a retry;
+- no new schema expected.
+
+Deferred: production deployment/image/HA, Gate 4 auth/access/share/usage, public API/UI, Agent, load/soak, multi-provider live acceptance and destructive cleanup.
