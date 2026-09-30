@@ -695,3 +695,44 @@ A valid expected_name is one direct path segment: valid bounded UTF-8, nonblank,
 The pinned 115 adapter may map only `OfflineTask.Name` into the provider-neutral result name. `FileId` and `DirId` remain provider-private and are not IndexCore identity.
 
 Gate 3.10 may later resolve the exact canonical child path from this frozen identity; D-031 itself authorizes no Q5 lookup and no READY transition.
+
+
+## D-031 — Canonical acquisition confirmation requires a durable result locator
+
+**Status:** Accepted
+
+`Manifest.target_path` is a directory scope, not the final acquired resource path. `Manifest.expected_name` is intentionally nullable. Panta must therefore never identify an acquisition result by listing the target directory and choosing a candidate.
+
+Before an acquisition may leave the provider stage for IndexCore observation, Panta must have one durable provider-neutral top-level result name:
+
+```text
+valid provider-observed TaskStatus.ResultName
+        >
+Manifest.ExpectedName fallback
+```
+
+The persisted result locator is:
+
+```text
+Manifest.result_name
+```
+
+and the future exact canonical candidate path is:
+
+```text
+Join(Manifest.target_path, Manifest.result_name)
+```
+
+Rules:
+- result_name is one safe basename/path segment, never a full path;
+- provider FileId/DirId/task reference are not IndexCore identity;
+- provider-observed result name wins over the expected-name fallback;
+- an invalid provider-observed result name fails closed rather than falling back silently;
+- if neither source provides a valid name, provider success cannot advance automatically to AWAITING_VISIBILITY and requires explicit recovery;
+- once persisted, result_name is immutable;
+- same-value replay is idempotent and different-value replay conflicts;
+- result_name is locator evidence only, not Canonical truth and never READY.
+
+The 115 adapter may source this field only from the pinned upstream offline task `Name`. It must not fabricate the name from magnet metadata, URL text, provider scope, Target.Path, FileId, or DirId.
+
+Gate 3.9 captures this locator. Exact IndexCore Q5/Journal confirmation remains a later Gate.
