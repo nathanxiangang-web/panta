@@ -894,3 +894,30 @@ The generic expired-lease sweep must not independently change the state of an AC
 No provider task reference, START_RESERVED fence, result_name, result_copy_id, claim generation or failure count is rewritten by this recovery. Nothing automatically repeats a provider mutation.
 
 Gate 3.12 implements these two bounded prerequisites with PostgreSQL evidence. It does not authorize a polling worker daemon, process runtime wiring, OpenList verification, Source Resolver, API or UI.
+
+## D-036 — One explicit acquisition runner tick, no autonomous scheduling
+
+**Status:** Accepted
+
+Gate 3.12 accepted type-scoped ACQUISITION Job claiming and atomic expired Manifest + Job lease recovery. Gate 3.13 connects these with the accepted one-stage D-034 dispatcher through one explicitly invoked application tick.
+
+RunOnce order:
+```text
+bounded MarkExpiredAcquisitionRecoveryRequired
+          ↓ if healthy
+ClaimNextByType(ACQUISITION) at most once
+          ↓ if job exists
+StageDispatcher.Dispatch at most once
+```
+
+Rules:
+- recovery debt or recovery store failure blocks further claims within the tick; partial recovered counts remain visible;
+- ErrNoClaimableJob is IDLE, not a failure or a synthetic claimed Job;
+- pass the actually claimed JobID, owner and ClaimAttempts to D-034; never use FailureCount as generation;
+- a tick never chains the resulting persisted Manifest into a second stage;
+- stage errors are surfaced, not converted into generic Job-only Fail/Succeed/RetryAt changes that could desynchronize the Manifest;
+- provider uncertainty remains governed by START_RESERVED and the accepted D-034 paired RECOVERY_REQUIRED transition;
+- caller policy time selects retry scheduling but PostgreSQL time remains the lease authority;
+- no new provider task side effect permission, OpenList verification, Copy writer, Job family, queue, schema migration or background worker loop.
+
+This Gate delivers a reusable bounded RunOnce capability. Continuous scheduling, `Application.Run` wiring, live credential configuration and deployment remain separately authorized later work.
