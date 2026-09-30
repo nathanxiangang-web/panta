@@ -62,6 +62,12 @@ Q5, Q8 and `ProjectOnce`. It verifies initial projection, identical-scan
 idempotency, and one additive resource.
 
 OpenList collection is additive-safe in this gate: absence is not proof of
-deletion. Gate 3 may later add post-download visibility verification plus an
-IndexCore Mutation Hint and bounded scoped refresh. Those capabilities are not
-part of Gate 1.
+deletion.
+
+For acquisition, D-029 keeps this ownership boundary unchanged: Panta does not
+add a direct OpenList visibility-verification lane. After provider completion,
+Panta sends a trusted Mutation Hint to IndexCore using the binding's
+`indexcore_root_id` and the Manifest's `target_path`; IndexCore then performs
+the OpenList-backed scoped verification and produces Canonical/Journal evidence.
+
+Those Gate 3 control-plane handoff capabilities are not part of Gate 1.
