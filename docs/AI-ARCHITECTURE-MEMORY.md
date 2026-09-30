@@ -3,8 +3,8 @@
 > Canonical short-form project memory for Architect/AI sessions.
 >
 > Last architecture-memory synchronization: **2026-09-30**
-> Active Gate: **3.11 / Issue #46 — One-claim acquisition stage dispatcher**
-> Governing corrections: **D-029** (IndexCore-owned observation), **D-030** (Git-first AI reconstruction), **D-032** (durable result_name locator), **D-033** (READY anchored to one canonical projected Copy), and **D-034** (one-claim stage routing).
+> Active Gate: **3.12 / Issue #48 — Acquisition-only claims and linked expired-lease recovery**
+> Governing corrections: **D-029** (IndexCore-owned observation), **D-030** (Git-first AI reconstruction), **D-032** (durable result_name locator), **D-033** (READY anchored to one canonical projected Copy), **D-034** (one-claim stage routing), and **D-035** (type-scoped claiming and atomic recovery).
 >
 > **Read this file before planning, reviewing, or authorizing any new Gate.**
 >
@@ -237,6 +237,17 @@ Never chain into a second stage in the same claim; a new claim is required.
 Do not consume FailureCount for ordinary stage waiting, do not bypass provider START_RESERVED, do not convert uncertain provider effects into blind retry.
 Gate 3.11 does not authorize an automatic scheduler, a continuous worker daemon, new stage Jobs, OpenList acquisition observation, Source Resolver parsing, or public API/UI.
 
+## 5.4 Acquisition lease recovery safety
+
+D-035 / Gate 3.12 closes two runtime prerequisites before an automatic worker may operate:
+
+1. Claiming must be type-scoped: acquisition workers only lease ACQUISITION Jobs and must not claim/discard other future Job types.
+2. Expired RUNNING ACQUISITION leases require an **atomic paired transition** of the exact linked Manifest and Job to RECOVERY_REQUIRED, not a Job-only update.
+
+Lock order: Manifest then Job. PostgreSQL time decides lease expiry; revalidate linkage and states under locks. Never erase START_RESERVED / provider task identity, retry StartDownload, reset failure budget, or fabricate terminal Manifest state.
+
+The existing generic expired-Job sweep must not independently place an ACQUISITION Job into RECOVERY_REQUIRED. No continuous scheduling/runtime is authorized by this Gate.
+
 ## 6. Job Engine invariants
 
 The ACQUISITION Job is the durable execution safety boundary.
@@ -358,14 +369,15 @@ Accepted:
 - Gate 3.8 — IndexCore trusted Mutation Hint and observation handoff
 - Gate 3.9 — durable acquisition result locator
 - Gate 3.10 — canonical Q5 + projected Copy + atomic READY finalization
+- Gate 3.11 — one-claim acquisition stage dispatcher and controlled E2E
 
 Authorized now:
-- **Gate 3.11 — Issue #46 — One-claim acquisition stage dispatcher and controlled end-to-end orchestration**
+- **Gate 3.12 — Issue #48 — Acquisition-only Job claim and atomic expired-lease recovery**
 
 Not authorized yet:
 - direct Panta OpenList acquisition verifier;
 - direct acquisition Copy creation/upsert;
-- Gate 3.12+ work beyond current one-claim orchestration;
+- continuous worker and Gate 3.13+ work beyond current recovery prerequisites;
 - API/UI;
 - auth/quota/share;
 - Agent implementation;
