@@ -606,20 +606,27 @@ before READY.
 
 ### Durable enforcement
 
-Migration `0011_expected_name_intent.sql` scopes `expected_name` explicitly as
-request intent: it re-asserts only the bounded-text guarantee (nonblank, 512-rune
-limit) and deliberately adds no separator or dot-component rule, because an intention
-is not a path segment.
-
-Migration `0012_acquisition_result_name.sql` adds the durable locator column
+Gate 3.9 advances the schema exactly one step, from v10 to v11. Migration
+`0011_acquisition_result_name.sql` adds the durable locator column
 `result_name text NULL` and constrains it as exactly one direct-child segment:
 nonblank, within the 512-rune limit, free of `/`, `\`, `.` and `..`. There is no
 database default, because a default would fabricate a locator for rows that never
 observed one.
 
+No migration is added for `expected_name`. The pre-existing v10 constraint already
+expresses everything the intent field requires — nonblank, bounded text with no
+separator or dot-component rule, because an intention is not a path segment.
+
 Exact spelling, case, and interior whitespace are preserved for the locator: the
 value is never trimmed, path-cleaned, or normalized, because a provider-reported name
 has to round-trip byte for byte to stay usable as identity.
+
+Promoting an intention to the locator is deliberately **not** permissive. When the
+provider reports no usable name, the intent is used as the fallback only if it also
+satisfies the direct-child rule. A permissive intent such as `a/b` is valid *intent*
+and is still accepted at request time, but it can never become `result_name`: the
+provider success fails closed as a missing identity, so the failure is a typed
+identity decision rather than a database constraint error, and neither row mutates.
 
 The locator commits inside the provider-success transaction, in the same statement
 that advances the milestone, so the locator and the state can never diverge. The

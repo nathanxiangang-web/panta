@@ -231,3 +231,73 @@ func TestProviderResultNameFromStatusNormalizesBlankToAbsent(t *testing.T) {
 
 // stringPointer is a small local helper for the optional identity fields.
 func stringPointer(value string) *string { return &value }
+
+// TestResolveResultNameRejectsUnpromotableIntentFallback is the Round 2 fix.
+//
+// expected_name is deliberately permissive because it is request intent: "a/b", "a\b",
+// ".", ".." and "a/../b" are all legitimate intentions. Promoting an intention to the
+// durable locator is NOT permissive: the fallback must satisfy the same direct-child
+// rule as a provider-reported name. Otherwise a permissive intent would be written as
+// result_name and only be caught later by the database CHECK, turning a typed identity
+// failure into a persistence error.
+func TestResolveResultNameRejectsUnpromotableIntentFallback(t *testing.T) {
+	// Each value is a legitimate bounded intention that nevertheless cannot become a
+	// direct-child locator. An over-long intent is rejected as intent too (the same
+	// 512-rune bound), so it is not listed here; it cannot reach this decision at all.
+	unpromotable := []string{
+		"a/b", `a\b`, ".", "..", "a/../b", "/absolute", "trailing/",
+	}
+	for _, intent := range unpromotable {
+		t.Run(intent, func(t *testing.T) {
+			// The intent itself is valid, so the request is never rejected up front.
+			if err := ValidateExpectedName(intent); err != nil {
+				t.Fatalf("ValidateExpectedName(%q) error = %v, want the intent accepted", intent, err)
+			}
+			// But it must not be promoted to a locator when the provider reports none.
+			got, changed, err := ResolveResultName(nil, nil, stringPointer(intent))
+			if !errors.Is(err, ErrResultNameMissing) {
+				t.Fatalf("ResolveResultName(intent=%q) error = %v, want typed ErrResultNameMissing", intent, err)
+			}
+			if got != "" || changed {
+				t.Fatalf("ResolveResultName(intent=%q) = (%q, %v), want no value after a refusal", intent, got, changed)
+			}
+		})
+	}
+}
+
+// TestResolveResultNamePromotesOnlyAValidIntent proves a promotable intent still
+// works as the fallback, so the fix refuses exactly the unsafe values and nothing more.
+func TestResolveResultNamePromotesOnlyAValidIntent(t *testing.T) {
+	for _, intent := range []string{"movie.mkv", "影片.mkv", "my file.mkv", " trail.mkv "} {
+		t.Run(intent, func(t *testing.T) {
+			got, changed, err := ResolveResultName(nil, nil, stringPointer(intent))
+			if err != nil || !changed {
+				t.Fatalf("ResolveResultName(intent=%q) = (%q, %v, %v), want it promoted", intent, got, changed, err)
+			}
+			if got != intent || len(got) != len(intent) {
+				t.Fatalf("promoted locator = %q, want %q byte for byte", got, intent)
+			}
+		})
+	}
+}
+
+// TestResolveResultNamePersistedLocatorIgnoresUnpromotableIntent proves a persisted
+// locator still stands even when the intent could never have become one.
+func TestResolveResultNamePersistedLocatorIgnoresUnpromotableIntent(t *testing.T) {
+	got, changed, err := ResolveResultName(stringPointer("observed.mkv"), nil, stringPointer("a/b"))
+	if err != nil {
+		t.Fatalf("ResolveResultName() error = %v, want the persisted locator to stand", err)
+	}
+	if got != "observed.mkv" || changed {
+		t.Fatalf("got (%q, %v), want (observed.mkv, false)", got, changed)
+	}
+}
+
+// TestResolveResultNamePromotableIntentAlsoRejectsMalformedProviderName proves the
+// provider-name rule is still applied before the fallback is considered: a malformed
+// provider name is a contract violation, never a reason to fall back.
+func TestResolveResultNamePromotableIntentAlsoRejectsMalformedProviderName(t *testing.T) {
+	if _, _, err := ResolveResultName(nil, stringPointer("a/b"), stringPointer("movie.mkv")); !errors.Is(err, ErrProviderResultName) {
+		t.Fatalf("error = %v, want ErrProviderResultName", err)
+	}
+}

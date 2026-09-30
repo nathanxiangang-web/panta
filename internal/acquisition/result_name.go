@@ -123,11 +123,20 @@ func ResolveResultName(
 	}
 
 	// The provider reported no usable name, so the request intent is the fallback.
+	//
+	// Intent is deliberately permissive, but promoting it to the durable locator is
+	// not: the fallback must satisfy the SAME direct-child rule as a provider-reported
+	// name. Otherwise an intent like "a/b" would be written as a locator and only be
+	// caught later by the database CHECK, turning a typed identity failure into a
+	// persistence error. A permissive intent that cannot be promoted therefore fails
+	// closed with the same sentinel as a missing identity, and nothing mutates.
 	if expectedName == nil {
 		return "", false, ErrResultNameMissing
 	}
-	if err := ValidateExpectedName(*expectedName); err != nil {
-		return "", false, fmt.Errorf("%w: expected name fallback is invalid", ErrResultNameMissing)
+	if err := ValidateResultName(*expectedName); err != nil {
+		return "", false, fmt.Errorf(
+			"%w: expected name %q is valid intent but not a usable result locator",
+			ErrResultNameMissing, *expectedName)
 	}
 	return *expectedName, true, nil
 }

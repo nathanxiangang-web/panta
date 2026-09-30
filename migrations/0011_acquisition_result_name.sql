@@ -1,6 +1,6 @@
 -- Gate 3.9 (D-032): add the durable acquired-result locator.
 --
--- D-032 separates two facts that the earlier D-031 interpretation conflated:
+-- D-032 separates two facts:
 --
 --   expected_name  optional request-time expectation / fallback hint
 --                  intent, never rewritten by provider execution
@@ -11,7 +11,10 @@
 --
 --   StorageBinding.indexcore_root_id + Manifest.target_path + Manifest.result_name
 --
--- This migration adds the locator column only.
+-- This migration adds the locator column only. It adds no second migration and
+-- changes no existing column: the pre-existing expected_name constraint already
+-- expresses everything the intent field requires, and Gate 3.9 has no other schema
+-- need, so the history advances exactly one step.
 ALTER TABLE acquisition_manifests
     ADD COLUMN result_name text NULL;
 
@@ -43,10 +46,11 @@ ALTER TABLE acquisition_manifests
 COMMENT ON COLUMN acquisition_manifests.result_name IS
     'Gate 3.9 D-032: durable provider-stage acquired-result locator. NULL until a provider success resolves it, immutable once persisted. Locator evidence only: never Canonical truth, never READY.';
 
--- Existing v10 rows keep result_name = NULL. No historical row is backfilled and no
+-- Existing rows keep result_name = NULL. No historical row is backfilled and no
 -- guess is recorded, because a locator that was never observed cannot be recovered
--- from timing, Journal order, or directory listing.
+-- from timing, Journal order, or a directory listing.
 --
--- Enforcement that automatic progression to observation carries a resolved locator
--- lives in the provider-success transition, not here: the database cannot know which
--- historical rows were legitimately observed and which are pre-Gate-3.9 debt.
+-- The fallback rule that promotes a permissive request intent to a locator is
+-- enforced in acquisition.ResolveResultName, not here: intent may legitimately be
+-- something that is not a path segment, so the database cannot express the promotion
+-- rule as a constraint on expected_name.

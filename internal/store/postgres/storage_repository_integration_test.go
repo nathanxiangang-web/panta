@@ -17,7 +17,7 @@ func TestPostgresProviderScopeMigrationPreservesExistingObservationBinding(t *te
 	pool := integrationPool(t, ctx)
 	resetTestSchema(t, ctx, pool)
 	history, err := migrations.All()
-	if err != nil || len(history) != 12 {
+	if err != nil || len(history) != 11 {
 		t.Fatalf("migration history = %#v, %v", history, err)
 	}
 	legacy := &Migrator{pool: pool, migrations: history[:6]}
@@ -46,7 +46,7 @@ INSERT INTO storage_bindings (
 	}
 	migrator, _ := NewMigrator(pool)
 	status, err := migrator.Apply(ctx)
-	if err != nil || !status.Compatible || status.CurrentVersion != 12 {
+	if err != nil || !status.Compatible || status.CurrentVersion != 11 {
 		t.Fatalf("upgrade to version 7 = %#v, %v", status, err)
 	}
 	repository, _ := NewStorageRepository(pool)
@@ -232,7 +232,7 @@ func migratedStorageRepository(t *testing.T, ctx context.Context) *StorageReposi
 	if err != nil {
 		t.Fatalf("Apply() error = %v", err)
 	}
-	if !status.Compatible || status.CurrentVersion != 12 || status.LatestVersion != 12 || len(status.Applied) != 12 {
+	if !status.Compatible || status.CurrentVersion != 11 || status.LatestVersion != 11 || len(status.Applied) != 11 {
 		t.Fatalf("migration status = %#v", status)
 	}
 	repository, err := NewStorageRepository(pool)

@@ -39,7 +39,7 @@ import (
 	"github.com/nathanxiangang-web/panta/migrations"
 )
 
-// resultNamePgConstraint is the named CHECK constraint migration 0012 adds.
+// resultNamePgConstraint is the named CHECK constraint migration 0011 adds.
 const resultNamePgConstraint = "acquisition_manifests_result_name_direct_child"
 
 // resultNamePgFixture is one seeded Manifest plus its linked RUNNING Job.
@@ -70,7 +70,7 @@ func newResultNamePgFixture(t *testing.T) (context.Context, *pgxpool.Pool, *Prov
 		t.Fatalf("NewMigrator() error = %v", err)
 	}
 	status, err := migrator.Apply(ctx)
-	if err != nil || !status.Compatible || status.CurrentVersion != 12 {
+	if err != nil || !status.Compatible || status.CurrentVersion != 11 {
 		t.Fatalf("Apply() = %#v, %v", status, err)
 	}
 	bindingID := storage.BindingID("39000000-0000-4000-8000-000000000000")
@@ -500,6 +500,56 @@ func TestPostgresResultNameFallsBackToExpectedName(t *testing.T) {
 	}
 }
 
+// TestPostgresResultNameUnpromotableIntentFailsClosed is the Round 2 fix.
+//
+// expected_name is permissive because it is request intent, but promoting an intent to
+// the durable locator must satisfy the direct-child rule. A permissive intent such as
+// "a/b" must therefore fail closed as a typed missing identity rather than being
+// written as result_name and only rejected later by the database CHECK, which would
+// surface as a persistence error instead of an identity decision.
+func TestPostgresResultNameUnpromotableIntentFailsClosed(t *testing.T) {
+	ctx, pool, outcomes, _, _, bindingID := newResultNamePgFixture(t)
+	now := time.Date(2026, 9, 30, 13, 33, 0, 0, time.UTC)
+
+	// Each is a valid bounded intention that cannot become a direct-child locator.
+	intents := []string{"a/b", `a\b`, ".", "..", "a/../b", "/absolute"}
+	for index, intent := range intents {
+		t.Run(intent, func(t *testing.T) {
+			suffix := fmt.Sprintf("%02d", 40+index)
+			fixture := seedResultNamePgFixture(t, ctx, pool, bindingID, suffix, "result-name-worker", 1,
+				acquisition.StateActive, resultNamePgString(intent), nil, time.Now().UTC().Add(time.Hour))
+
+			before := readResultNamePgManifest(t, ctx, pool, fixture.manifestID)
+
+			// The provider reports no name, so the intent would be the only candidate.
+			_, err := outcomes.CommitProviderOutcome(ctx, resultNamePgSuccessPlan(t, fixture, now, nil))
+			if !errors.Is(err, acquisition.ErrResultNameMissing) {
+				t.Fatalf("CommitProviderOutcome() error = %v, want ErrResultNameMissing", err)
+			}
+			// It must be a typed identity failure, never a database constraint error.
+			if errors.Is(err, acquisition.ErrProviderOutcomePersistence) {
+				t.Fatalf("error = %v, want a typed identity decision rather than a persistence error", err)
+			}
+
+			after := readResultNamePgManifest(t, ctx, pool, fixture.manifestID)
+			if after.ResultName != nil {
+				t.Fatalf("result_name = %s, want NULL when the intent is not promotable",
+					resultNamePgFormatOptionalString(after.ResultName))
+			}
+			if after.State != before.State {
+				t.Fatalf("Manifest state = %q, want %q unchanged", after.State, before.State)
+			}
+			if !after.UpdatedAt.Equal(before.UpdatedAt) {
+				t.Fatalf("Manifest updated_at = %v, want %v unchanged", after.UpdatedAt, before.UpdatedAt)
+			}
+			if after.ExpectedName == nil || *after.ExpectedName != intent {
+				t.Fatalf("expected_name = %s, want the intent %q preserved",
+					resultNamePgFormatOptionalString(after.ExpectedName), intent)
+			}
+		})
+	}
+}
+
 // --- 4: no provider name and no usable intent fails closed, changing nothing ---
 
 func TestPostgresResultNameMissingLocatorFailsClosedWithoutMutation(t *testing.T) {
@@ -916,7 +966,7 @@ func TestPostgresResultNameForcedFailureRollsBackLocatorAndBothRecords(t *testin
 		readResultNamePgJob(t, ctx, pool, fixture.jobID))
 }
 
-// --- 10: migration 0012's direct-child CHECK constraint ------------------------
+// --- 10: migration 0011's direct-child CHECK constraint ------------------------
 
 func TestPostgresResultNameDatabaseConstraintRejectsNonDirectChild(t *testing.T) {
 	ctx, pool, _, _, _, bindingID := newResultNamePgFixture(t)
@@ -1028,9 +1078,9 @@ INSERT INTO acquisition_manifests (
 	}
 }
 
-// --- 12: the v11 -> v12 upgrade preserves history without guessing -------------
+// --- 12: the v10 -> v11 upgrade preserves history without guessing -------------
 
-func TestPostgresResultNameMigrationV11ToV12PreservesHistory(t *testing.T) {
+func TestPostgresResultNameMigrationV10ToV11PreservesHistory(t *testing.T) {
 	ctx := context.Background()
 	pool := integrationPool(t, ctx)
 	resetTestSchema(t, ctx, pool)
@@ -1039,22 +1089,22 @@ func TestPostgresResultNameMigrationV11ToV12PreservesHistory(t *testing.T) {
 	if err != nil {
 		t.Fatalf("migrations.All() error = %v", err)
 	}
-	legacy := make([]migrations.Migration, 0, 11)
+	legacy := make([]migrations.Migration, 0, 10)
 	for _, migration := range history {
-		if migration.Version <= 11 {
+		if migration.Version <= 10 {
 			legacy = append(legacy, migration)
 		}
 	}
-	if len(legacy) != 11 {
-		t.Fatalf("legacy history has %d migrations, want 11", len(legacy))
+	if len(legacy) != 10 {
+		t.Fatalf("legacy history has %d migrations, want 10", len(legacy))
 	}
-	if last := legacy[len(legacy)-1].Version; last != 11 {
-		t.Fatalf("legacy history ends at version %d, want 11", last)
+	if last := legacy[len(legacy)-1].Version; last != 10 {
+		t.Fatalf("legacy history ends at version %d, want 10", last)
 	}
 	legacyMigrator := &Migrator{pool: pool, migrations: legacy}
 	legacyStatus, err := legacyMigrator.Apply(ctx)
-	if err != nil || !legacyStatus.Compatible || legacyStatus.CurrentVersion != 11 {
-		t.Fatalf("apply through version 11 = %#v, %v", legacyStatus, err)
+	if err != nil || !legacyStatus.Compatible || legacyStatus.CurrentVersion != 10 {
+		t.Fatalf("apply through version 10 = %#v, %v", legacyStatus, err)
 	}
 
 	var resultNameColumnExists bool
@@ -1066,7 +1116,7 @@ SELECT EXISTS (
 		t.Fatalf("inspect pre-upgrade columns: %v", err)
 	}
 	if resultNameColumnExists {
-		t.Fatal("result_name already exists before the version 12 upgrade")
+		t.Fatal("result_name already exists before the version 11 upgrade")
 	}
 
 	bindingID := storage.BindingID("39000000-0000-4000-8000-000000000000")
@@ -1081,7 +1131,7 @@ INSERT INTO acquisition_manifests (
     target_path, state, created_at, updated_at
 ) VALUES ($1, 'opaque-source', 'opaque-ref', $2, $3, '/downloads/legacy', 'AWAITING_CANONICAL', $4, $4)`,
 		manifestID, legacyExpectedName, string(bindingID), now); err != nil {
-		t.Fatalf("seed version 11 Manifest: %v", err)
+		t.Fatalf("seed version 10 Manifest: %v", err)
 	}
 
 	var beforeExpectedName, beforeState string
@@ -1089,13 +1139,13 @@ INSERT INTO acquisition_manifests (
 	if err := pool.QueryRow(ctx, `
 SELECT expected_name, state, updated_at FROM acquisition_manifests WHERE manifest_id = $1`,
 		manifestID).Scan(&beforeExpectedName, &beforeState, &beforeUpdatedAt); err != nil {
-		t.Fatalf("read version 11 Manifest: %v", err)
+		t.Fatalf("read version 10 Manifest: %v", err)
 	}
 	if beforeExpectedName != legacyExpectedName {
-		t.Fatalf("version 11 expected_name = %q, want %q", beforeExpectedName, legacyExpectedName)
+		t.Fatalf("version 10 expected_name = %q, want %q", beforeExpectedName, legacyExpectedName)
 	}
 	if beforeState != string(acquisition.StateAwaitingCanonical) {
-		t.Fatalf("version 11 state = %q, want %q", beforeState, acquisition.StateAwaitingCanonical)
+		t.Fatalf("version 10 state = %q, want %q", beforeState, acquisition.StateAwaitingCanonical)
 	}
 
 	migrator, err := NewMigrator(pool)
@@ -1104,9 +1154,9 @@ SELECT expected_name, state, updated_at FROM acquisition_manifests WHERE manifes
 	}
 	upgraded, err := migrator.Apply(ctx)
 	if err != nil {
-		t.Fatalf("apply version 12: %v", err)
+		t.Fatalf("apply version 11: %v", err)
 	}
-	if !upgraded.Compatible || upgraded.CurrentVersion != 12 || upgraded.LatestVersion != 12 {
+	if !upgraded.Compatible || upgraded.CurrentVersion != 11 || upgraded.LatestVersion != 11 {
 		t.Fatalf("upgrade status = %#v", upgraded)
 	}
 
@@ -1120,7 +1170,7 @@ WHERE manifest_id = $1`, manifestID).Scan(&afterResultName, &afterExpectedName, 
 		t.Fatalf("read upgraded Manifest: %v", err)
 	}
 	if afterResultName.Valid {
-		t.Fatalf("result_name = %q after the upgrade, want NULL: migration 0012 backfills and guesses nothing",
+		t.Fatalf("result_name = %q after the upgrade, want NULL: migration 0011 backfills and guesses nothing",
 			afterResultName.String)
 	}
 	if afterExpectedName != legacyExpectedName {
@@ -1139,6 +1189,6 @@ SELECT count(*) FROM acquisition_manifests WHERE result_name IS NOT NULL`).Scan(
 		t.Fatalf("count backfilled locators: %v", err)
 	}
 	if backfilled != 0 {
-		t.Fatalf("migration 0012 backfilled %d row(s), want 0", backfilled)
+		t.Fatalf("migration 0011 backfilled %d row(s), want 0", backfilled)
 	}
 }
