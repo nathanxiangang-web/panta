@@ -17,14 +17,26 @@ import (
 // a single PostgreSQL transaction over the Acquisition Manifest, its linked Job, and
 // the confirming Copy row.
 //
-// It never creates or updates a Copy: D-017 keeps Copy creation and availability with
-// the Journal Projector. This repository only reads the proposed Copy under lock to
-// prove the application-layer read was not stale, and then finalizes the acquisition.
+// It never creates a Copy and never writes classification directly: D-017 keeps Copy
+// creation and availability with the Journal Projector, and D-019 keeps the monotonic
+// Copy -> Variant binding with the catalog repository.
 type CanonicalStageRepository struct {
 	db canonicalDB
+	// classifications is the accepted catalog binding owner. When a plan requests a
+	// Variant binding it is applied through this port on the canonical transaction, so
+	// the classification write and the finalization commit or roll back together.
+	classifications CopyVariantBinderInTransaction
 	// afterManifestUpdate is a test-only injection point placed between the row
 	// mutations so rollback atomicity can be proven.
 	afterManifestUpdate func(context.Context, pgx.Tx) error
+}
+
+// CopyVariantBinderInTransaction is the transaction-joining form of the accepted
+// catalog classification owner. Accepting an existing transaction is what keeps the
+// binding inside the database-time lease fence, so a stale worker can never leave a
+// permanently changed Copy behind a rejected acquisition.
+type CopyVariantBinderInTransaction interface {
+	BindCopyToVariantInTransaction(context.Context, pgx.Tx, catalog.CopyID, catalog.VariantID) (catalog.Copy, error)
 }
 
 type canonicalDB interface {
@@ -37,7 +49,28 @@ func NewCanonicalStageRepository(db canonicalDB) (*CanonicalStageRepository, err
 	if db == nil {
 		return nil, errors.New("acquisition canonical database is required")
 	}
-	return &CanonicalStageRepository{db: db}, nil
+	catalogDatabase, ok := db.(catalogDB)
+	if !ok {
+		return nil, errors.New("acquisition canonical database must support catalog classification")
+	}
+	classifications, err := NewCatalogRepository(catalogDatabase)
+	if err != nil {
+		return nil, fmt.Errorf("build canonical classification repository: %w", err)
+	}
+	return NewCanonicalStageRepositoryWithClassifications(db, classifications)
+}
+
+// NewCanonicalStageRepositoryWithClassifications wires the canonical stage to the
+// accepted catalog classification owner, so a requested Variant binding is applied by
+// the catalog inside the finalization transaction rather than by this package.
+func NewCanonicalStageRepositoryWithClassifications(
+	db canonicalDB,
+	classifications CopyVariantBinderInTransaction,
+) (*CanonicalStageRepository, error) {
+	if db == nil {
+		return nil, errors.New("acquisition canonical database is required")
+	}
+	return &CanonicalStageRepository{db: db, classifications: classifications}, nil
 }
 
 func (repository *CanonicalStageRepository) CommitCanonical(
@@ -97,19 +130,17 @@ FOR UPDATE`, string(plan.ManifestID)))
 		return acquisition.CanonicalResult{}, err
 	}
 
-	if plan.Ready {
-		// Revalidate the exact Copy under its own row lock, so a stale application-layer
-		// read can never authorize READY.
-		copyRecord, err := scanCanonicalCopy(tx.QueryRow(ctx, `SELECT `+canonicalCopyColumns+`
-FROM copies
-WHERE copy_id = $1
-FOR SHARE`, string(plan.ResultCopyID)))
-		if errors.Is(err, pgx.ErrNoRows) {
-			return acquisition.CanonicalResult{}, fmt.Errorf("%w: Copy %s",
-				acquisition.ErrCanonicalCopyMissing, plan.ResultCopyID)
-		}
+	// A plan that carries no Copy revalidation facts is a replay of an already
+	// finalized acquisition and performs no Copy work at all.
+	verifyCopy := plan.ExpectedCopyBindingID != ""
+	if plan.Ready && verifyCopy {
+		// Revalidate - and, when classification is requested, bind - the exact Copy
+		// under its own row lock INSIDE this database-time lease-fenced transaction.
+		// The binding is never a separate write, so an unauthorized worker cannot
+		// mutate Copy classification and only be rejected afterwards.
+		copyRecord, err := repository.lockAndBindCanonicalCopy(ctx, tx, plan)
 		if err != nil {
-			return acquisition.CanonicalResult{}, canonicalPersistenceError("lock confirming Copy", err)
+			return acquisition.CanonicalResult{}, err
 		}
 		if err := verifyCanonicalLockedCopy(copyRecord, plan); err != nil {
 			return acquisition.CanonicalResult{}, err
@@ -243,6 +274,63 @@ func (repository *CanonicalStageRepository) commitCanonicalReplay(
 	return acquisition.CanonicalResult{Manifest: manifest, Job: job, Changed: false}, nil
 }
 
+// lockAndBindCanonicalCopy locks the confirming Copy and, when the plan requests
+// classification, applies the accepted monotonic Copy -> Variant binding on the SAME
+// transaction that finalizes the acquisition.
+//
+// The binding repeats the accepted D-019 monotonic rule: the same target is an
+// idempotent replay, an already-classified Copy with a different target conflicts, and
+// an unclassified Copy is bound. Because it happens under this transaction's
+// database-time lease fence, a stale worker can never leave a permanently changed Copy
+// behind a rejected acquisition.
+func (repository *CanonicalStageRepository) lockAndBindCanonicalCopy(
+	ctx context.Context,
+	tx pgx.Tx,
+	plan acquisition.CanonicalPlan,
+) (catalog.Copy, error) {
+	copyRecord, err := scanCanonicalCopy(tx.QueryRow(ctx, `SELECT `+canonicalCopyColumns+`
+FROM copies
+WHERE copy_id = $1
+FOR UPDATE`, string(plan.ResultCopyID)))
+	if errors.Is(err, pgx.ErrNoRows) {
+		return catalog.Copy{}, fmt.Errorf("%w: Copy %s",
+			acquisition.ErrCanonicalCopyMissing, plan.ResultCopyID)
+	}
+	if err != nil {
+		return catalog.Copy{}, canonicalPersistenceError("lock confirming Copy", err)
+	}
+	if plan.ClassifiedVariantID == nil {
+		return copyRecord, nil
+	}
+	target := *plan.ClassifiedVariantID
+	if copyRecord.VariantID != nil {
+		if *copyRecord.VariantID != target {
+			return catalog.Copy{}, fmt.Errorf("%w: Copy %s is bound to Variant %s",
+				acquisition.ErrCanonicalCopyClassified, copyRecord.ID, *copyRecord.VariantID)
+		}
+		// Same target: an idempotent replay, no write.
+		return copyRecord, nil
+	}
+	// The binding is delegated to the accepted catalog owner on THIS transaction.
+	if repository.classifications == nil {
+		return catalog.Copy{}, fmt.Errorf(
+			"%w: Copy classification owner is not wired, so Variant %s cannot be bound",
+			acquisition.ErrCanonicalCopyClassified, target)
+	}
+	bound, err := repository.classifications.BindCopyToVariantInTransaction(ctx, tx, plan.ResultCopyID, target)
+	if err != nil {
+		if errors.Is(err, catalog.ErrCopyAlreadyClassified) {
+			return catalog.Copy{}, fmt.Errorf("%w: %v", acquisition.ErrCanonicalCopyClassified, err)
+		}
+		return catalog.Copy{}, err
+	}
+	if bound.ID != plan.ResultCopyID || bound.VariantID == nil || *bound.VariantID != target {
+		return catalog.Copy{}, fmt.Errorf("%w: Copy %s is not bound to Variant %s",
+			acquisition.ErrCanonicalCopyClassified, plan.ResultCopyID, target)
+	}
+	return bound, nil
+}
+
 // verifyCanonicalLockedCopy proves the locked Copy still is the accepted physical
 // result at commit time.
 func verifyCanonicalLockedCopy(copyRecord catalog.Copy, plan acquisition.CanonicalPlan) error {
@@ -320,12 +408,27 @@ func validateCanonicalPlan(plan acquisition.CanonicalPlan) error {
 		return acquisition.ErrInvalidCanonicalRequest
 	}
 	if plan.Ready {
+		if plan.ManifestState != acquisition.StateReady || plan.JobState != jobs.StateSucceeded {
+			return acquisition.ErrInvalidCanonicalRequest
+		}
+		// A replay of an already-finalized acquisition carries only the committed result
+		// link, so Copy revalidation facts are optional. Whenever a plan does supply
+		// them they must be complete, so a partially specified revalidation can never
+		// silently degrade into an unchecked finalization.
+		if plan.ExpectedCopyRootID == "" && plan.ExpectedCopyResourceID == "" &&
+			plan.ExpectedCopyBindingID == "" && plan.ExpectedCopyAvailability == "" {
+			if plan.ResultCopyID == "" || plan.ExpectedCopyVariantID != nil || plan.ClassifiedVariantID != nil {
+				return acquisition.ErrInvalidCanonicalRequest
+			}
+			return nil
+		}
 		if plan.ResultCopyID == "" || plan.ExpectedCopyRootID == "" ||
 			plan.ExpectedCopyResourceID == "" || plan.ExpectedCopyBindingID == "" ||
 			plan.ExpectedCopyAvailability != catalog.CopyAvailabilityPresent {
 			return acquisition.ErrInvalidCanonicalRequest
 		}
-		if plan.ManifestState != acquisition.StateReady || plan.JobState != jobs.StateSucceeded {
+		if (plan.ManifestVariantID == nil) != (plan.ClassifiedVariantID == nil) ||
+			(plan.ManifestVariantID != nil && *plan.ManifestVariantID != *plan.ClassifiedVariantID) {
 			return acquisition.ErrInvalidCanonicalRequest
 		}
 		return nil

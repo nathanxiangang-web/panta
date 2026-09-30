@@ -30,6 +30,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgconn"
 	"github.com/jackc/pgx/v5/pgxpool"
 
@@ -293,6 +294,7 @@ func canonicalPgReadyPlan(
 		ExpectedCopyAvailability: catalog.CopyAvailabilityPresent,
 		ExpectedCopyVariantID:    copyRecord.VariantID,
 		ManifestVariantID:        manifestVariantID,
+		ClassifiedVariantID:      manifestVariantID,
 		ManifestState:            acquisition.StateReady,
 		JobState:                 jobs.StateSucceeded,
 		Now:                      now,
@@ -366,6 +368,19 @@ WHERE manifest_id = $1`, string(id)).Scan(&state, &resultCopyID, &jobID, &varian
 		row.VariantID = &value
 	}
 	return row
+}
+
+func readCanonicalPgCopyVariant(t *testing.T, ctx context.Context, pool *pgxpool.Pool, id catalog.CopyID) *catalog.VariantID {
+	t.Helper()
+	var stored sql.NullString
+	if err := pool.QueryRow(ctx, `SELECT variant_id::text FROM copies WHERE copy_id = $1`, string(id)).Scan(&stored); err != nil {
+		t.Fatalf("read Copy %s variant_id: %v", id, err)
+	}
+	if !stored.Valid {
+		return nil
+	}
+	variantID := catalog.VariantID(stored.String)
+	return &variantID
 }
 
 type canonicalPgDurableJob struct {
@@ -1026,17 +1041,26 @@ func TestPostgresCanonicalVariantBindingFailsClosed(t *testing.T) {
 	fixture := newCanonicalPgFixture(t)
 	variantID := catalog.VariantID(seedVariant(t, fixture.ctx, fixture.pool))
 
-	t.Run("Copy not bound to the Manifest Variant", func(t *testing.T) {
+	t.Run("unclassified Copy is bound and finalized atomically", func(t *testing.T) {
 		seeded := seedCanonicalPgManifestJob(t, fixture.ctx, fixture.pool, fixture.bindingID, "0c",
 			acquisition.StateAwaitingCanonical, "canonical-worker-a", 1, 1, 5, canonicalPgLeaseEnd(), &variantID)
 		copyRecord := seedCanonicalPgCopy(t, fixture.ctx, fixture.pool, fixture.bindingID, "0c",
 			"resource-variant-0c", nil, catalog.CopyAvailabilityPresent)
 		plan := canonicalPgReadyPlan(seeded, fixture.bindingID, copyRecord, &variantID, canonicalPgNow())
 
-		if _, err := fixture.repository.CommitCanonical(fixture.ctx, plan); !errors.Is(err, acquisition.ErrCanonicalCopyClassified) {
-			t.Fatalf("CommitCanonical() with an unbound Copy error = %v, want ErrCanonicalCopyClassified", err)
+		result, err := fixture.repository.CommitCanonical(fixture.ctx, plan)
+		if err != nil || !result.Changed {
+			t.Fatalf("CommitCanonical() = %#v, %v; want atomic classification and finalization", result, err)
 		}
-		canonicalPgAssertUntouched(t, fixture, seeded, acquisition.StateAwaitingCanonical)
+		bound := readCanonicalPgCopyVariant(t, fixture.ctx, fixture.pool, copyRecord.ID)
+		if bound == nil || *bound != variantID {
+			t.Fatalf("durable Copy variant_id = %v, want %s", bound, variantID)
+		}
+		manifest := readCanonicalPgManifest(t, fixture.ctx, fixture.pool, seeded.manifestID)
+		job := readCanonicalPgJob(t, fixture.ctx, fixture.pool, seeded.jobID)
+		if manifest.State != acquisition.StateReady || manifest.ResultCopyID == nil || *manifest.ResultCopyID != copyRecord.ID || job.State != jobs.StateSucceeded {
+			t.Fatalf("durable finalization = Manifest %#v Job %q, want READY/result Copy/SUCCEEDED", manifest, job.State)
+		}
 	})
 
 	t.Run("Copy already bound to the Manifest Variant finalizes", func(t *testing.T) {
@@ -1064,6 +1088,83 @@ func TestPostgresCanonicalVariantBindingFailsClosed(t *testing.T) {
 			t.Fatalf("durable Manifest variant_id = %v, want %s", manifest.VariantID, variantID)
 		}
 	})
+
+	t.Run("Copy bound to a different Variant fails closed", func(t *testing.T) {
+		otherVariantID := catalog.VariantID("92000000-0000-4000-8000-000000000004")
+		if _, err := fixture.pool.Exec(fixture.ctx, `
+INSERT INTO variants (variant_id, release_id, variant_key, attributes, status, created_at, updated_at)
+SELECT $1, release_id, 'other', '{}', 'ACTIVE', created_at, updated_at
+FROM variants WHERE variant_id = $2`, string(otherVariantID), string(variantID)); err != nil {
+			t.Fatalf("seed different Variant: %v", err)
+		}
+		seeded := seedCanonicalPgManifestJob(t, fixture.ctx, fixture.pool, fixture.bindingID, "0e",
+			acquisition.StateAwaitingCanonical, "canonical-worker-a", 1, 1, 5, canonicalPgLeaseEnd(), &variantID)
+		copyRecord := seedCanonicalPgCopy(t, fixture.ctx, fixture.pool, fixture.bindingID, "0e",
+			"resource-variant-0e", &otherVariantID, catalog.CopyAvailabilityPresent)
+		plan := canonicalPgReadyPlan(seeded, fixture.bindingID, copyRecord, &variantID, canonicalPgNow())
+
+		if _, err := fixture.repository.CommitCanonical(fixture.ctx, plan); !errors.Is(err, acquisition.ErrCanonicalCopyClassified) {
+			t.Fatalf("CommitCanonical() error = %v, want ErrCanonicalCopyClassified", err)
+		}
+		canonicalPgAssertUntouched(t, fixture, seeded, acquisition.StateAwaitingCanonical)
+		bound := readCanonicalPgCopyVariant(t, fixture.ctx, fixture.pool, copyRecord.ID)
+		if bound == nil || *bound != otherVariantID {
+			t.Fatalf("durable Copy variant_id = %v, want unchanged %s", bound, otherVariantID)
+		}
+	})
+}
+
+func TestPostgresCanonicalVariantBindingRollsBackWithFinalizationFailure(t *testing.T) {
+	fixture := newCanonicalPgFixture(t)
+	variantID := catalog.VariantID(seedVariant(t, fixture.ctx, fixture.pool))
+	seeded := seedCanonicalPgManifestJob(t, fixture.ctx, fixture.pool, fixture.bindingID, "2a",
+		acquisition.StateAwaitingCanonical, "canonical-worker-a", 1, 1, 5, canonicalPgLeaseEnd(), &variantID)
+	copyRecord := seedCanonicalPgCopy(t, fixture.ctx, fixture.pool, fixture.bindingID, "2a",
+		"resource-rollback-2a", nil, catalog.CopyAvailabilityPresent)
+	plan := canonicalPgReadyPlan(seeded, fixture.bindingID, copyRecord, &variantID, canonicalPgNow())
+	injected := errors.New("forced failure after Copy binding and Manifest update")
+	fixture.repository.afterManifestUpdate = func(context.Context, pgx.Tx) error { return injected }
+	defer func() { fixture.repository.afterManifestUpdate = nil }()
+
+	if _, err := fixture.repository.CommitCanonical(fixture.ctx, plan); !errors.Is(err, acquisition.ErrCanonicalPersistence) || !strings.Contains(err.Error(), injected.Error()) {
+		t.Fatalf("CommitCanonical() error = %v, want injected persistence failure", err)
+	}
+	canonicalPgAssertUntouched(t, fixture, seeded, acquisition.StateAwaitingCanonical)
+	if bound := readCanonicalPgCopyVariant(t, fixture.ctx, fixture.pool, copyRecord.ID); bound != nil {
+		t.Fatalf("durable Copy variant_id = %v, want NULL after transaction rollback", bound)
+	}
+}
+
+func TestPostgresCanonicalLeaseFencePreventsVariantMutation(t *testing.T) {
+	tests := []struct {
+		name       string
+		suffix     string
+		leaseEnd   time.Time
+		mutatePlan func(*acquisition.CanonicalPlan)
+	}{
+		{name: "expired database-time lease", suffix: "2b", leaseEnd: canonicalPgExpiredLeaseEnd(), mutatePlan: func(*acquisition.CanonicalPlan) {}},
+		{name: "stale claim generation", suffix: "2c", leaseEnd: canonicalPgLeaseEnd(), mutatePlan: func(plan *acquisition.CanonicalPlan) { plan.ExpectedClaim-- }},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			fixture := newCanonicalPgFixture(t)
+			variantID := catalog.VariantID(seedVariant(t, fixture.ctx, fixture.pool))
+			seeded := seedCanonicalPgManifestJob(t, fixture.ctx, fixture.pool, fixture.bindingID, test.suffix,
+				acquisition.StateAwaitingCanonical, "canonical-worker-a", 3, 1, 5, test.leaseEnd, &variantID)
+			copyRecord := seedCanonicalPgCopy(t, fixture.ctx, fixture.pool, fixture.bindingID, test.suffix,
+				"resource-fenced-"+test.suffix, nil, catalog.CopyAvailabilityPresent)
+			plan := canonicalPgReadyPlan(seeded, fixture.bindingID, copyRecord, &variantID, canonicalPgNow())
+			test.mutatePlan(&plan)
+
+			if _, err := fixture.repository.CommitCanonical(fixture.ctx, plan); !errors.Is(err, acquisition.ErrCanonicalFence) {
+				t.Fatalf("CommitCanonical() error = %v, want ErrCanonicalFence", err)
+			}
+			canonicalPgAssertUntouched(t, fixture, seeded, acquisition.StateAwaitingCanonical)
+			if bound := readCanonicalPgCopyVariant(t, fixture.ctx, fixture.pool, copyRecord.ID); bound != nil {
+				t.Fatalf("durable Copy variant_id = %v, want NULL after rejected fence", bound)
+			}
+		})
+	}
 }
 
 // --- 9: claim generation and failure budget ------------------------------------

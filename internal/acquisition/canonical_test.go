@@ -440,8 +440,8 @@ func TestCanonicalZeroMatchesIsPendingReschedule(t *testing.T) {
 		plan.Owner != fixture.request.Owner || plan.ExpectedClaim != fixture.request.ExpectedClaim {
 		t.Fatalf("plan identity = %#v, want the request identity", plan)
 	}
-	if plan.ExpectedCopyBindingID != canonicalTestBindingID {
-		t.Fatalf("plan ExpectedCopyBindingID = %q, want %q", plan.ExpectedCopyBindingID, canonicalTestBindingID)
+	if plan.ExpectedCopyBindingID != "" {
+		t.Fatalf("plan ExpectedCopyBindingID = %q, want empty for a pending plan", plan.ExpectedCopyBindingID)
 	}
 	if plan.ResultCopyID != "" {
 		t.Fatalf("plan ResultCopyID = %q, want empty for a pending plan", plan.ResultCopyID)
@@ -702,74 +702,31 @@ func TestCanonicalVariantBinding(t *testing.T) {
 		}
 	})
 
-	t.Run("present Manifest Variant binds through the classifier", func(t *testing.T) {
+	t.Run("present Manifest Variant is delegated to the fenced store", func(t *testing.T) {
 		fixture := newCanonicalFixture(t)
 		fixture.manifests.manifest.VariantID = canonicalVariantPointer(variantA)
-		bound := fixture.copyRecord
-		bound.ID = "copy-bound-1"
-		bound.VariantID = canonicalVariantPointer(variantA)
-		fixture.classifier.bound = bound
 
 		if _, err := fixture.confirmation.Confirm(context.Background(), fixture.request); err != nil {
 			t.Fatalf("Confirm() error = %v, want nil", err)
 		}
-		if fixture.classifier.calls != 1 {
-			t.Fatalf("classifier calls = %d, want 1", fixture.classifier.calls)
-		}
-		if fixture.classifier.lastCopyID != canonicalTestCopyID {
-			t.Fatalf("classifier CopyID = %q, want %q", fixture.classifier.lastCopyID, canonicalTestCopyID)
-		}
-		if fixture.classifier.lastVariantID != variantA {
-			t.Fatalf("classifier VariantID = %q, want %q", fixture.classifier.lastVariantID, variantA)
+		if fixture.classifier.calls != 0 {
+			t.Fatalf("classifier calls = %d, want 0 before the fenced store transaction", fixture.classifier.calls)
 		}
 		plan := fixture.store.plan
 		if !plan.Ready {
-			t.Fatalf("plan Ready = false, want true for a bound Copy")
+			t.Fatalf("plan Ready = false, want true")
 		}
-		if plan.ResultCopyID != "copy-bound-1" {
-			t.Fatalf("plan ResultCopyID = %q, want the final bound Copy id %q", plan.ResultCopyID, "copy-bound-1")
+		if plan.ResultCopyID != canonicalTestCopyID {
+			t.Fatalf("plan ResultCopyID = %q, want %q", plan.ResultCopyID, canonicalTestCopyID)
 		}
-		if plan.ExpectedCopyVariantID == nil || *plan.ExpectedCopyVariantID != variantA {
-			t.Fatalf("plan ExpectedCopyVariantID = %v, want %q", plan.ExpectedCopyVariantID, variantA)
+		if plan.ExpectedCopyVariantID != nil {
+			t.Fatalf("plan ExpectedCopyVariantID = %v, want the observed NULL binding", plan.ExpectedCopyVariantID)
 		}
 		if plan.ManifestVariantID == nil || *plan.ManifestVariantID != variantA {
 			t.Fatalf("plan ManifestVariantID = %v, want %q", plan.ManifestVariantID, variantA)
 		}
-	})
-
-	t.Run("classifier returns an unbound Copy", func(t *testing.T) {
-		fixture := newCanonicalFixture(t)
-		fixture.manifests.manifest.VariantID = canonicalVariantPointer(variantA)
-		unbound := fixture.copyRecord
-		unbound.VariantID = nil
-		fixture.classifier.bound = unbound
-
-		if _, err := fixture.confirmation.Confirm(context.Background(), fixture.request); !errors.Is(err, ErrCanonicalCopyClassified) {
-			t.Fatalf("Confirm() error = %v, want ErrCanonicalCopyClassified", err)
-		}
-		if fixture.classifier.calls != 1 {
-			t.Fatalf("classifier calls = %d, want 1", fixture.classifier.calls)
-		}
-		if fixture.store.calls != 0 {
-			t.Fatalf("store calls = %d, want 0", fixture.store.calls)
-		}
-	})
-
-	t.Run("classifier returns a differently bound Copy", func(t *testing.T) {
-		fixture := newCanonicalFixture(t)
-		fixture.manifests.manifest.VariantID = canonicalVariantPointer(variantA)
-		differently := fixture.copyRecord
-		differently.VariantID = canonicalVariantPointer(variantB)
-		fixture.classifier.bound = differently
-
-		if _, err := fixture.confirmation.Confirm(context.Background(), fixture.request); !errors.Is(err, ErrCanonicalCopyClassified) {
-			t.Fatalf("Confirm() error = %v, want ErrCanonicalCopyClassified", err)
-		}
-		if fixture.classifier.calls != 1 {
-			t.Fatalf("classifier calls = %d, want 1", fixture.classifier.calls)
-		}
-		if fixture.store.calls != 0 {
-			t.Fatalf("store calls = %d, want 0", fixture.store.calls)
+		if plan.ClassifiedVariantID == nil || *plan.ClassifiedVariantID != variantA {
+			t.Fatalf("plan ClassifiedVariantID = %v, want %q", plan.ClassifiedVariantID, variantA)
 		}
 	})
 
@@ -816,19 +773,18 @@ func TestCanonicalPlanResultCopyID(t *testing.T) {
 		}
 	})
 
-	t.Run("ready plan carries the final bound Copy id", func(t *testing.T) {
+	t.Run("ready plan keeps the projected Copy id while requesting atomic binding", func(t *testing.T) {
 		fixture := newCanonicalFixture(t)
 		fixture.manifests.manifest.VariantID = canonicalVariantPointer(variantA)
-		bound := fixture.copyRecord
-		bound.ID = "copy-bound-1"
-		bound.VariantID = canonicalVariantPointer(variantA)
-		fixture.classifier.bound = bound
 
 		if _, err := fixture.confirmation.Confirm(context.Background(), fixture.request); err != nil {
 			t.Fatalf("Confirm() error = %v, want nil", err)
 		}
-		if fixture.store.plan.ResultCopyID != "copy-bound-1" {
-			t.Fatalf("plan ResultCopyID = %q, want the final bound Copy id %q", fixture.store.plan.ResultCopyID, "copy-bound-1")
+		if fixture.store.plan.ResultCopyID != canonicalTestCopyID {
+			t.Fatalf("plan ResultCopyID = %q, want projected Copy %q", fixture.store.plan.ResultCopyID, canonicalTestCopyID)
+		}
+		if fixture.store.plan.ClassifiedVariantID == nil || *fixture.store.plan.ClassifiedVariantID != variantA {
+			t.Fatalf("plan ClassifiedVariantID = %v, want %q", fixture.store.plan.ClassifiedVariantID, variantA)
 		}
 	})
 }
@@ -950,8 +906,9 @@ func TestCanonicalFencesFailBeforeResolverCall(t *testing.T) {
 func TestCanonicalInvalidRequestFailsClosed(t *testing.T) {
 	now := time.Date(2026, 9, 30, 12, 0, 0, 0, time.UTC)
 	tests := []struct {
-		label  string
-		mutate func(*CanonicalRequest)
+		label      string
+		mutate     func(*CanonicalRequest)
+		loadsState bool
 	}{
 		{label: "empty ManifestID", mutate: func(request *CanonicalRequest) { request.ManifestID = "" }},
 		{label: "empty JobID", mutate: func(request *CanonicalRequest) { request.JobID = "" }},
@@ -959,12 +916,13 @@ func TestCanonicalInvalidRequestFailsClosed(t *testing.T) {
 		{label: "zero ExpectedClaim", mutate: func(request *CanonicalRequest) { request.ExpectedClaim = 0 }},
 		{label: "negative ExpectedClaim", mutate: func(request *CanonicalRequest) { request.ExpectedClaim = -1 }},
 		{label: "zero Now", mutate: func(request *CanonicalRequest) { request.Now = time.Time{} }},
-		{label: "zero RetryAt", mutate: func(request *CanonicalRequest) { request.RetryAt = time.Time{} }},
-		{label: "RetryAt equal to Now", mutate: func(request *CanonicalRequest) { request.RetryAt = request.Now }},
-		{label: "RetryAt before Now", mutate: func(request *CanonicalRequest) { request.RetryAt = request.Now.Add(-time.Second) }},
+		{label: "zero RetryAt", mutate: func(request *CanonicalRequest) { request.RetryAt = time.Time{} }, loadsState: true},
+		{label: "RetryAt equal to Now", mutate: func(request *CanonicalRequest) { request.RetryAt = request.Now }, loadsState: true},
+		{label: "RetryAt before Now", mutate: func(request *CanonicalRequest) { request.RetryAt = request.Now.Add(-time.Second) }, loadsState: true},
 		{
-			label:  "projector page limit above the maximum",
-			mutate: func(request *CanonicalRequest) { request.ProjectorPageLimit = MaxCanonicalProjectorLimit + 1 },
+			label:      "projector page limit above the maximum",
+			mutate:     func(request *CanonicalRequest) { request.ProjectorPageLimit = MaxCanonicalProjectorLimit + 1 },
+			loadsState: true,
 		},
 	}
 	for _, test := range tests {
@@ -976,8 +934,12 @@ func TestCanonicalInvalidRequestFailsClosed(t *testing.T) {
 				t.Fatalf("Confirm() error = %v, want ErrInvalidCanonicalRequest", err)
 			}
 			fixture.assertNoDownstreamCalls(t, test.label)
-			if fixture.manifests.calls != 0 {
-				t.Fatalf("manifest reads = %d, want 0 before request validation", fixture.manifests.calls)
+			wantReads := 0
+			if test.loadsState {
+				wantReads = 1
+			}
+			if fixture.manifests.calls != wantReads || fixture.jobs.calls != wantReads {
+				t.Fatalf("Manifest/Job reads = %d/%d, want %d/%d", fixture.manifests.calls, fixture.jobs.calls, wantReads, wantReads)
 			}
 		})
 	}
@@ -1000,6 +962,17 @@ func TestCanonicalReadyReplaySkipsExternalCalls(t *testing.T) {
 	fixture := newCanonicalFixture(t)
 	fixture.manifests.manifest.State = StateReady
 	fixture.manifests.manifest.ResultCopyID = canonicalCopyIDPointer("copy-committed")
+	fixture.manifests.manifest.ResultName = nil
+	fixture.jobs.job.State = jobs.StateSucceeded
+	fixture.bindings.binding.Status = storage.BindingStatusDisabled
+	fixture.bindings.binding.IndexCoreRootID = "changed-root"
+	fixture.bindings.err = errors.New("binding must not be loaded on replay")
+	fixture.request.RetryAt = time.Time{}
+	fixture.store.result = CanonicalResult{
+		Manifest: fixture.manifests.manifest,
+		Job:      fixture.jobs.job,
+		Changed:  false,
+	}
 
 	result, err := fixture.confirmation.Confirm(context.Background(), fixture.request)
 	if err != nil {
@@ -1025,8 +998,11 @@ func TestCanonicalReadyReplaySkipsExternalCalls(t *testing.T) {
 		t.Fatalf("resolver=%d projector=%d copies=%d classifier=%d, want all 0 on a READY replay",
 			fixture.resolver.calls, fixture.projector.calls, fixture.copies.calls, fixture.classifier.calls)
 	}
-	if !result.Changed {
-		t.Fatalf("result Changed = false, want the store result returned")
+	if result.Changed {
+		t.Fatalf("result Changed = true, want exact replay Changed=false")
+	}
+	if fixture.bindings.calls != 0 {
+		t.Fatalf("binding reads = %d, want 0 on READY replay", fixture.bindings.calls)
 	}
 }
 

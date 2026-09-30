@@ -120,10 +120,18 @@ type CanonicalPlan struct {
 	ExpectedCopyAvailability string
 	ExpectedCopyVariantID    *catalog.VariantID
 	ManifestVariantID        *catalog.VariantID
-	Now                      time.Time
-	RetryAt                  *time.Time
-	ManifestState            State
-	JobState                 jobs.State
+	// ClassifiedVariantID requests the monotonic Copy -> Variant binding INSIDE the
+	// same database-time lease-fenced transaction that finalizes the acquisition.
+	// The binding must not be a separate write: a stale worker whose lease expired
+	// after the in-memory check could otherwise mutate Copy classification and only
+	// be rejected later by the finalization fence, leaving a permanently changed
+	// Copy behind a failed acquisition. D-019 makes that binding monotonic, so such a
+	// stale write could even win a legitimate classification race.
+	ClassifiedVariantID *catalog.VariantID
+	Now                 time.Time
+	RetryAt             *time.Time
+	ManifestState       State
+	JobState            jobs.State
 }
 
 // CanonicalResult is the durable state after one canonical confirmation invocation.
@@ -134,7 +142,7 @@ type CanonicalResult struct {
 	Changed bool
 }
 
-// CanonicalStageStore commits the plan atomically.
+// CanonicalStageStore owns the database-time-fenced atomic finalization.
 type CanonicalStageStore interface {
 	CommitCanonical(context.Context, CanonicalPlan) (CanonicalResult, error)
 }
@@ -204,10 +212,33 @@ func (confirmation *CanonicalConfirmation) Confirm(ctx context.Context, request 
 		return CanonicalResult{}, err
 	}
 	if request.ManifestID == "" || request.JobID == "" || strings.TrimSpace(request.Owner) == "" ||
-		request.ExpectedClaim < 1 || request.Now.IsZero() || request.RetryAt.IsZero() {
+		request.ExpectedClaim < 1 || request.Now.IsZero() {
 		return CanonicalResult{}, ErrInvalidCanonicalRequest
 	}
-	if !request.RetryAt.After(request.Now) {
+
+	manifest, job, err := confirmation.loadManifest(ctx, request)
+	if err != nil {
+		return CanonicalResult{}, err
+	}
+
+	// An already-finalized acquisition is resolved from the Manifest and Job alone.
+	//
+	// result_copy_id is the historical result link, so a later disabled StorageBinding,
+	// changed root configuration, or Copy availability must never invalidate the
+	// replay. Nothing below this branch - binding, root, Q5, projector, Copy read,
+	// classification - is consulted, and RetryAt is not required because a finalized
+	// acquisition never retries.
+	if manifest.State == StateReady {
+		if job.State != jobs.StateSucceeded {
+			return CanonicalResult{}, fmt.Errorf("%w: Manifest %s is READY but Job %s is %s",
+				ErrCanonicalConflict, manifest.ID, job.ID, job.State)
+		}
+		return confirmation.store.CommitCanonical(ctx, canonicalReplayPlan(request, manifest))
+	}
+	if manifest.State != StateAwaitingCanonical {
+		return CanonicalResult{}, fmt.Errorf("%w: %s", ErrCanonicalManifestState, manifest.State)
+	}
+	if request.RetryAt.IsZero() || !request.RetryAt.After(request.Now) {
 		return CanonicalResult{}, fmt.Errorf("%w: RetryAt must be after Now", ErrInvalidCanonicalRequest)
 	}
 	limit := request.ProjectorPageLimit
@@ -218,21 +249,12 @@ func (confirmation *CanonicalConfirmation) Confirm(ctx context.Context, request 
 		return CanonicalResult{}, fmt.Errorf("%w: projector page limit %d exceeds %d",
 			ErrInvalidCanonicalRequest, limit, MaxCanonicalProjectorLimit)
 	}
-
-	manifest, job, binding, err := confirmation.load(ctx, request)
-	if err != nil {
+	if err := validateCanonicalJob(manifest, job, request); err != nil {
 		return CanonicalResult{}, err
 	}
 
-	// An already-finalized Manifest is an exact replay or a conflict, decided by the
-	// store without any external call.
-	if manifest.State == StateReady {
-		return confirmation.store.CommitCanonical(ctx, canonicalReplayPlan(request, manifest, binding))
-	}
-	if manifest.State != StateAwaitingCanonical {
-		return CanonicalResult{}, fmt.Errorf("%w: %s", ErrCanonicalManifestState, manifest.State)
-	}
-	if err := validateCanonicalJob(manifest, job, request); err != nil {
+	binding, err := confirmation.loadBinding(ctx, manifest)
+	if err != nil {
 		return CanonicalResult{}, err
 	}
 
@@ -257,7 +279,7 @@ func (confirmation *CanonicalConfirmation) Confirm(ctx context.Context, request 
 	if pending {
 		// Zero matches is normal pending work, not a failure: reschedule the same Job
 		// without touching the Manifest and without consuming the failure budget.
-		return confirmation.store.CommitCanonical(ctx, canonicalPendingPlan(request, manifest, binding))
+		return confirmation.store.CommitCanonical(ctx, canonicalPendingPlan(request, manifest))
 	}
 
 	// Step 2: advance the existing projector by at most one bounded page.
@@ -270,7 +292,7 @@ func (confirmation *CanonicalConfirmation) Confirm(ctx context.Context, request 
 	// Step 3: load the exact Copy by physical identity. Acquisition never creates it.
 	copyRecord, err := confirmation.copies.GetCopyByPhysicalIdentity(ctx, resource.RootID, resource.ResourceID)
 	if errors.Is(err, catalog.ErrNotFound) {
-		return confirmation.store.CommitCanonical(ctx, canonicalPendingPlan(request, manifest, binding))
+		return confirmation.store.CommitCanonical(ctx, canonicalPendingPlan(request, manifest))
 	}
 	if err != nil {
 		return CanonicalResult{}, err
@@ -279,70 +301,64 @@ func (confirmation *CanonicalConfirmation) Confirm(ctx context.Context, request 
 		if errors.Is(err, ErrCanonicalCopyRemoved) {
 			// A REMOVED Copy is still pending: later Journal/canonical evidence may
 			// change it, so this is not a failure and not READY.
-			return confirmation.store.CommitCanonical(ctx, canonicalPendingPlan(request, manifest, binding))
+			return confirmation.store.CommitCanonical(ctx, canonicalPendingPlan(request, manifest))
 		}
 		return CanonicalResult{}, err
 	}
 
-	// Step 4: optional monotonic classification. Only an explicit Manifest intent
-	// binds the Copy; an absent VariantID deliberately leaves it unresolved.
-	finalCopy := copyRecord
-	if manifest.VariantID != nil {
-		bound, err := confirmation.classify.Bind(ctx, copyRecord.ID, *manifest.VariantID)
-		if err != nil {
-			return CanonicalResult{}, err
-		}
-		if bound.VariantID == nil || *bound.VariantID != *manifest.VariantID {
-			return CanonicalResult{}, fmt.Errorf(
-				"%w: Copy %s is not bound to the Manifest Variant %s",
-				ErrCanonicalCopyClassified, bound.ID, *manifest.VariantID)
-		}
-		finalCopy = bound
-	}
-
-	return confirmation.store.CommitCanonical(ctx, canonicalReadyPlan(request, manifest, binding, resource, finalCopy))
+	// Step 4: the optional monotonic Copy -> Variant binding travels INSIDE the plan.
+	// It is applied by the finalization transaction under the same database-time lease
+	// fence, so an unauthorized worker can never mutate Copy classification.
+	return confirmation.store.CommitCanonical(ctx, canonicalReadyPlan(request, manifest, binding, resource, copyRecord))
 }
 
-// load reads the Manifest, the fenced Job, and the ACTIVE StorageBinding.
-func (confirmation *CanonicalConfirmation) load(ctx context.Context, request CanonicalRequest) (Manifest, jobs.Job, storage.Binding, error) {
+// loadManifest reads the Manifest and its Job. These two are the only facts a
+// finalized replay needs, so the binding is deliberately fetched separately.
+func (confirmation *CanonicalConfirmation) loadManifest(ctx context.Context, request CanonicalRequest) (Manifest, jobs.Job, error) {
 	manifest, err := confirmation.manifests.GetManifest(ctx, request.ManifestID)
 	if errors.Is(err, ErrNotFound) {
-		return Manifest{}, jobs.Job{}, storage.Binding{},
+		return Manifest{}, jobs.Job{},
 			fmt.Errorf("%w: %s", ErrCanonicalManifestNotFnd, request.ManifestID)
 	}
 	if err != nil {
-		return Manifest{}, jobs.Job{}, storage.Binding{}, fmt.Errorf("load acquisition Manifest: %w", err)
+		return Manifest{}, jobs.Job{}, fmt.Errorf("load acquisition Manifest: %w", err)
 	}
 	if manifest.ID != request.ManifestID {
-		return Manifest{}, jobs.Job{}, storage.Binding{}, fmt.Errorf("%w: requested %s, read %s",
+		return Manifest{}, jobs.Job{}, fmt.Errorf("%w: requested %s, read %s",
 			ErrExecutionIdentityMismatch, request.ManifestID, manifest.ID)
 	}
 	job, err := confirmation.jobs.Get(ctx, request.JobID)
 	if errors.Is(err, jobs.ErrNotFound) {
-		return Manifest{}, jobs.Job{}, storage.Binding{}, fmt.Errorf("%w: Job %s", ErrCanonicalFence, request.JobID)
+		return Manifest{}, jobs.Job{}, fmt.Errorf("%w: Job %s", ErrCanonicalFence, request.JobID)
 	}
 	if err != nil {
-		return Manifest{}, jobs.Job{}, storage.Binding{}, fmt.Errorf("load Job: %w", err)
+		return Manifest{}, jobs.Job{}, fmt.Errorf("load Job: %w", err)
 	}
+	return manifest, job, nil
+}
+
+// loadBinding reads the ACTIVE StorageBinding and its IndexCore root. It is only
+// consulted on the path that still has to resolve canonical truth.
+func (confirmation *CanonicalConfirmation) loadBinding(ctx context.Context, manifest Manifest) (storage.Binding, error) {
 	binding, err := confirmation.bindings.GetBinding(ctx, manifest.TargetStorageBindingID)
 	if errors.Is(err, storage.ErrNotFound) {
-		return Manifest{}, jobs.Job{}, storage.Binding{},
+		return storage.Binding{},
 			fmt.Errorf("%w: %s", ErrCanonicalBindingMissing, manifest.TargetStorageBindingID)
 	}
 	if err != nil {
-		return Manifest{}, jobs.Job{}, storage.Binding{}, fmt.Errorf("load StorageBinding: %w", err)
+		return storage.Binding{}, fmt.Errorf("load StorageBinding: %w", err)
 	}
 	if binding.ID != manifest.TargetStorageBindingID {
-		return Manifest{}, jobs.Job{}, storage.Binding{}, fmt.Errorf("%w: requested binding %s, read %s",
+		return storage.Binding{}, fmt.Errorf("%w: requested binding %s, read %s",
 			ErrStorageTopologyMismatch, manifest.TargetStorageBindingID, binding.ID)
 	}
 	if binding.Status != storage.BindingStatusActive {
-		return Manifest{}, jobs.Job{}, storage.Binding{}, fmt.Errorf("%w: %s", ErrCanonicalBindingState, binding.ID)
+		return storage.Binding{}, fmt.Errorf("%w: %s", ErrCanonicalBindingState, binding.ID)
 	}
 	if strings.TrimSpace(binding.IndexCoreRootID) == "" || binding.IndexCoreRootID != strings.TrimSpace(binding.IndexCoreRootID) {
-		return Manifest{}, jobs.Job{}, storage.Binding{}, fmt.Errorf("%w: binding %s", ErrCanonicalRootID, binding.ID)
+		return storage.Binding{}, fmt.Errorf("%w: binding %s", ErrCanonicalRootID, binding.ID)
 	}
-	return manifest, job, binding, nil
+	return binding, nil
 }
 
 // validateCanonicalJob proves the Job is the linked ACQUISITION Job holding the
@@ -465,20 +481,19 @@ func validateCanonicalCopy(copyRecord catalog.Copy, resource CanonicalResource, 
 	return nil
 }
 
-func canonicalPendingPlan(request CanonicalRequest, manifest Manifest, binding storage.Binding) CanonicalPlan {
+func canonicalPendingPlan(request CanonicalRequest, manifest Manifest) CanonicalPlan {
 	retryAt := request.RetryAt.UTC()
 	return CanonicalPlan{
-		ManifestID:            request.ManifestID,
-		JobID:                 request.JobID,
-		Owner:                 request.Owner,
-		ExpectedClaim:         request.ExpectedClaim,
-		Ready:                 false,
-		ManifestState:         StateAwaitingCanonical,
-		JobState:              jobs.StateRetryWait,
-		ExpectedCopyBindingID: binding.ID,
-		ManifestVariantID:     manifest.VariantID,
-		Now:                   request.Now.UTC(),
-		RetryAt:               &retryAt,
+		ManifestID:        request.ManifestID,
+		JobID:             request.JobID,
+		Owner:             request.Owner,
+		ExpectedClaim:     request.ExpectedClaim,
+		Ready:             false,
+		ManifestState:     StateAwaitingCanonical,
+		JobState:          jobs.StateRetryWait,
+		ManifestVariantID: manifest.VariantID,
+		Now:               request.Now.UTC(),
+		RetryAt:           &retryAt,
 	}
 }
 
@@ -502,28 +517,31 @@ func canonicalReadyPlan(
 		ExpectedCopyAvailability: catalog.CopyAvailabilityPresent,
 		ExpectedCopyVariantID:    copyRecord.VariantID,
 		ManifestVariantID:        manifest.VariantID,
+		ClassifiedVariantID:      manifest.VariantID,
 		ManifestState:            StateReady,
 		JobState:                 jobs.StateSucceeded,
 		Now:                      request.Now.UTC(),
 	}
 }
 
-// canonicalReplayPlan defers the replay decision entirely to the store, which has
-// the Manifest row locked and can tell an exact replay from a conflict without any
-// external call.
-func canonicalReplayPlan(request CanonicalRequest, manifest Manifest, binding storage.Binding) CanonicalPlan {
+// canonicalReplayPlan is the replay of an already-finalized acquisition. It carries
+// only the durable facts a result link needs - the Manifest, the Job, and the committed
+// result Copy - so replay stays independent of the current StorageBinding status, root
+// configuration, Q5, projector, and Copy availability.
+//
+// Replay also needs no RetryAt, because a finalized acquisition never retries.
+func canonicalReplayPlan(request CanonicalRequest, manifest Manifest) CanonicalPlan {
 	return CanonicalPlan{
-		ManifestID:            request.ManifestID,
-		JobID:                 request.JobID,
-		Owner:                 request.Owner,
-		ExpectedClaim:         request.ExpectedClaim,
-		Ready:                 true,
-		ResultCopyID:          copyIDOrEmpty(manifest.ResultCopyID),
-		ExpectedCopyBindingID: binding.ID,
-		ManifestVariantID:     manifest.VariantID,
-		ManifestState:         StateReady,
-		JobState:              jobs.StateSucceeded,
-		Now:                   request.Now.UTC(),
+		ManifestID:        request.ManifestID,
+		JobID:             request.JobID,
+		Owner:             request.Owner,
+		ExpectedClaim:     request.ExpectedClaim,
+		Ready:             true,
+		ResultCopyID:      copyIDOrEmpty(manifest.ResultCopyID),
+		ManifestVariantID: manifest.VariantID,
+		ManifestState:     StateReady,
+		JobState:          jobs.StateSucceeded,
+		Now:               request.Now.UTC(),
 	}
 }
 

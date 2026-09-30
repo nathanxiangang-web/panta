@@ -32,10 +32,49 @@ func (repository *CatalogRepository) BindCopyToVariant(ctx context.Context, copy
 	}
 	defer func() { _ = tx.Rollback(ctx) }()
 
+	result, err := repository.bindCopyToVariantInTransaction(ctx, tx, copyID, variantID)
+	if err != nil {
+		return catalog.BindCopyResult{}, err
+	}
+	if err := tx.Commit(ctx); err != nil {
+		return catalog.BindCopyResult{}, classificationPersistenceError("commit classification", err)
+	}
+	return result, nil
+}
+
+// BindCopyToVariantInTransaction applies the same monotonic rule on a CALLER-OWNED
+// transaction, so a composite operation - Gate 3.10 canonical finalization - can bind
+// the Copy and finalize its own records as one atomic unit under a single fence.
+//
+// It deliberately does not commit: the caller owns the transaction boundary.
+func (repository *CatalogRepository) BindCopyToVariantInTransaction(
+	ctx context.Context,
+	tx pgx.Tx,
+	copyID catalog.CopyID,
+	variantID catalog.VariantID,
+) (catalog.Copy, error) {
+	if tx == nil || copyID == "" || variantID == "" {
+		return catalog.Copy{}, catalog.ErrInvalidClassification
+	}
+	result, err := repository.bindCopyToVariantInTransaction(ctx, tx, copyID, variantID)
+	if err != nil {
+		return catalog.Copy{}, err
+	}
+	return result.Copy, nil
+}
+
+// bindCopyToVariantInTransaction is the shared classification transition. It never
+// commits, so both callers control the transaction boundary.
+func (repository *CatalogRepository) bindCopyToVariantInTransaction(
+	ctx context.Context,
+	tx pgx.Tx,
+	copyID catalog.CopyID,
+	variantID catalog.VariantID,
+) (catalog.BindCopyResult, error) {
 	var resourceCopy catalog.Copy
 	var storedCopyID, storageBindingID string
 	var storedVariantID sql.NullString
-	err = tx.QueryRow(ctx, `
+	err := tx.QueryRow(ctx, `
 SELECT copy_id::text, variant_id::text, indexcore_root_id, indexcore_resource_id,
        storage_binding_id::text, availability, created_at, updated_at
 FROM copies
@@ -57,9 +96,6 @@ FOR UPDATE`, string(copyID)).Scan(
 		resourceCopy.VariantID = &current
 		if current != variantID {
 			return catalog.BindCopyResult{}, fmt.Errorf("%w: Copy %s is bound to Variant %s", catalog.ErrCopyAlreadyClassified, copyID, current)
-		}
-		if err := tx.Commit(ctx); err != nil {
-			return catalog.BindCopyResult{}, classificationPersistenceError("commit same-target replay", err)
 		}
 		return catalog.BindCopyResult{Copy: resourceCopy, Changed: false}, nil
 	}
@@ -90,9 +126,6 @@ RETURNING updated_at`, string(copyID), lockedVariantID).Scan(&resourceCopy.Updat
 	}
 	target := catalog.VariantID(lockedVariantID)
 	resourceCopy.VariantID = &target
-	if err := tx.Commit(ctx); err != nil {
-		return catalog.BindCopyResult{}, classificationPersistenceError("commit classification", err)
-	}
 	return catalog.BindCopyResult{Copy: resourceCopy, Changed: true}, nil
 }
 
