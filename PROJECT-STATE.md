@@ -6,7 +6,7 @@
 
 **MVP implementation — Gate 3**
 
-Gate 0, Gate 1, and Gate 2 are formally accepted and closed. Gate 3.1 through Gate 3.7 are accepted and merged. Gate 3.8 is authorized and in progress.
+Gate 0, Gate 1, and Gate 2 are formally accepted and closed. Gate 3.1 through Gate 3.8 are accepted and merged. Gate 3.9 is authorized and in progress.
 
 ## Accepted baseline
 
@@ -732,9 +732,35 @@ Scope:
 - no direct Panta OpenList HTTP/API/database access.
 
 Explicitly deferred:
+- acquisition result locator capture;
 - Q5/Journal canonical confirmation;
 - Copy/Projector completion orchestration;
 - READY transition;
+- acquisition worker loop;
+- public API/UI.
+
+## Current bounded task
+
+### Gate 3.9 — Durable acquisition result locator before canonical confirmation
+
+Status: **AUTHORIZED / IN PROGRESS**
+
+Tracking: GitHub Issue #42
+
+Scope:
+- extend provider-neutral TaskStatus with optional ResultName;
+- map pinned 115 OfflineTask.Name only, without fabricating from provider IDs/paths;
+- carry result name through the bounded ExecutionStep result;
+- add durable immutable Manifest.result_name via migration v11;
+- provider success resolves result_name from provider-observed name first, ExpectedName fallback second;
+- missing result identity blocks automatic AWAITING_VISIBILITY progression and requires recovery;
+- provider success atomically persists result_name + AWAITING_VISIBILITY + RETRY_WAIT;
+- no Q5/Journal/OpenList/READY work in this Gate.
+
+Explicitly deferred:
+- exact IndexCore canonical confirmation;
+- Copy/Projector completion + optional Variant binding;
+- READY / Job SUCCEEDED finalization;
 - acquisition worker loop;
 - public API/UI.
 
