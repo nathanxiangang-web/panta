@@ -106,6 +106,9 @@ provider task
     ↓
 provider reports SUCCEEDED
     ↓
+durable Manifest.result_name
+    provider ResultName > ExpectedName fallback
+    ↓
 Manifest AWAITING_VISIBILITY
     ↓
 Panta sends trusted IndexCore Mutation Hint
@@ -311,6 +314,27 @@ Not authorized yet:
 - auth/quota/share;
 - Agent implementation;
 - generalized workflows/microservices/distributed queue.
+
+## 10A. Acquisition result locator
+
+Before provider success may advance to observation, Panta must durably know one top-level result basename.
+
+```text
+provider-observed TaskStatus.ResultName
+        >
+Manifest.ExpectedName fallback
+        ↓
+Manifest.result_name
+```
+
+Rules:
+- target_path remains a directory scope;
+- result_name is one safe path segment, not a path;
+- never infer the acquired result by listing the target directory or choosing a new/sole object;
+- provider FileId/DirId/info_hash are not IndexCore physical identity;
+- missing result identity requires explicit recovery;
+- future exact canonical candidate path is `Join(target_path, result_name)`;
+- result_name itself is not Canonical truth and never READY.
 
 ## 11. Superseded / dangerous historical statements
 
