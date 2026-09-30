@@ -121,6 +121,23 @@ FOR UPDATE`, string(plan.ManifestID)))
 		return acquisition.CanonicalResult{}, fmt.Errorf("%w: Manifest %s is %s",
 			acquisition.ErrCanonicalManifestState, manifest.ID, manifest.State)
 	}
+	if plan.Ready {
+		// Only a durable READY Manifest may use the replay-only plan. Every fresh
+		// transition needs the complete Copy proof before any row is changed.
+		if plan.ExpectedCopyRootID == "" || plan.ExpectedCopyResourceID == "" ||
+			plan.ExpectedCopyBindingID == "" || plan.ExpectedCopyAvailability != catalog.CopyAvailabilityPresent {
+			return acquisition.CanonicalResult{}, acquisition.ErrInvalidCanonicalRequest
+		}
+		if plan.ExpectedCopyBindingID != manifest.TargetStorageBindingID {
+			return acquisition.CanonicalResult{}, fmt.Errorf("%w: plan binding %s differs from Manifest binding %s",
+				acquisition.ErrCanonicalCopyBinding, plan.ExpectedCopyBindingID, manifest.TargetStorageBindingID)
+		}
+		if !sameCanonicalVariant(plan.ManifestVariantID, manifest.VariantID) ||
+			!sameCanonicalVariant(plan.ClassifiedVariantID, manifest.VariantID) {
+			return acquisition.CanonicalResult{}, fmt.Errorf("%w: plan Variant differs from locked Manifest %s",
+				acquisition.ErrCanonicalCopyClassified, manifest.ID)
+		}
+	}
 
 	expired, err := leaseExpiredByDatabaseTime(ctx, tx, job)
 	if err != nil {
@@ -130,10 +147,7 @@ FOR UPDATE`, string(plan.ManifestID)))
 		return acquisition.CanonicalResult{}, err
 	}
 
-	// A plan that carries no Copy revalidation facts is a replay of an already
-	// finalized acquisition and performs no Copy work at all.
-	verifyCopy := plan.ExpectedCopyBindingID != ""
-	if plan.Ready && verifyCopy {
+	if plan.Ready {
 		// Revalidate - and, when classification is requested, bind - the exact Copy
 		// under its own row lock INSIDE this database-time lease-fenced transaction.
 		// The binding is never a separate write, so an unauthorized worker cannot
@@ -142,7 +156,7 @@ FOR UPDATE`, string(plan.ManifestID)))
 		if err != nil {
 			return acquisition.CanonicalResult{}, err
 		}
-		if err := verifyCanonicalLockedCopy(copyRecord, plan); err != nil {
+		if err := verifyCanonicalLockedCopy(copyRecord, manifest, plan); err != nil {
 			return acquisition.CanonicalResult{}, err
 		}
 	}
@@ -333,7 +347,7 @@ FOR UPDATE`, string(plan.ResultCopyID)))
 
 // verifyCanonicalLockedCopy proves the locked Copy still is the accepted physical
 // result at commit time.
-func verifyCanonicalLockedCopy(copyRecord catalog.Copy, plan acquisition.CanonicalPlan) error {
+func verifyCanonicalLockedCopy(copyRecord catalog.Copy, manifest acquisition.Manifest, plan acquisition.CanonicalPlan) error {
 	if copyRecord.ID != plan.ResultCopyID {
 		return fmt.Errorf("%w: locked Copy %s, want %s",
 			acquisition.ErrCanonicalCopyConflict, copyRecord.ID, plan.ResultCopyID)
@@ -350,19 +364,31 @@ func verifyCanonicalLockedCopy(copyRecord catalog.Copy, plan acquisition.Canonic
 			acquisition.ErrCanonicalCopyBinding, copyRecord.ID,
 			copyRecord.StorageBindingID, plan.ExpectedCopyBindingID)
 	}
+	if string(copyRecord.StorageBindingID) != string(manifest.TargetStorageBindingID) {
+		return fmt.Errorf("%w: locked Copy %s belongs to %s, Manifest targets %s",
+			acquisition.ErrCanonicalCopyBinding, copyRecord.ID,
+			copyRecord.StorageBindingID, manifest.TargetStorageBindingID)
+	}
 	if copyRecord.Availability != catalog.CopyAvailabilityPresent {
 		return fmt.Errorf("%w: locked Copy %s availability is %q, want PRESENT",
 			acquisition.ErrCanonicalCopyRemoved, copyRecord.ID, copyRecord.Availability)
 	}
 	// The classification intent must match at commit time: the Copy must already be
 	// bound to the Manifest Variant when the Manifest declares one.
-	if plan.ManifestVariantID != nil {
-		if copyRecord.VariantID == nil || *copyRecord.VariantID != *plan.ManifestVariantID {
+	if manifest.VariantID != nil {
+		if copyRecord.VariantID == nil || *copyRecord.VariantID != *manifest.VariantID {
 			return fmt.Errorf("%w: locked Copy %s is not bound to Manifest Variant %s",
-				acquisition.ErrCanonicalCopyClassified, copyRecord.ID, *plan.ManifestVariantID)
+				acquisition.ErrCanonicalCopyClassified, copyRecord.ID, *manifest.VariantID)
 		}
 	}
 	return nil
+}
+
+func sameCanonicalVariant(left, right *catalog.VariantID) bool {
+	if left == nil || right == nil {
+		return left == nil && right == nil
+	}
+	return *left == *right
 }
 
 func verifyCanonicalManifestLinkage(manifest acquisition.Manifest, plan acquisition.CanonicalPlan) error {

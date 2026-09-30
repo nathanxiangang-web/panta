@@ -692,6 +692,13 @@ func TestPostgresCanonicalExactReplayRewritesNothing(t *testing.T) {
 	// The exact same plan, replayed later: the durable outcome must not move.
 	later := plan
 	later.Now = plan.Now.Add(3 * time.Hour)
+	later.ExpectedCopyRootID = ""
+	later.ExpectedCopyResourceID = ""
+	later.ExpectedCopyBindingID = ""
+	later.ExpectedCopyAvailability = ""
+	if _, err := fixture.pool.Exec(fixture.ctx, `UPDATE storage_bindings SET status = 'DISABLED' WHERE storage_binding_id = $1`, string(fixture.bindingID)); err != nil {
+		t.Fatalf("disable StorageBinding before replay: %v", err)
+	}
 	replayed, err := fixture.repository.CommitCanonical(fixture.ctx, later)
 	if err != nil {
 		t.Fatalf("exact replay CommitCanonical() error = %v", err)
@@ -730,6 +737,94 @@ func TestPostgresCanonicalExactReplayRewritesNothing(t *testing.T) {
 	if !canonicalPgOptionalTimeEqual(job.FinishedAt, firstJob.FinishedAt) {
 		t.Fatalf("durable Job finished_at = %s, want %s",
 			canonicalPgFormatOptionalTime(job.FinishedAt), canonicalPgFormatOptionalTime(firstJob.FinishedAt))
+	}
+}
+
+func TestPostgresCanonicalReplayOnlyPlanCannotFinalizeFreshManifest(t *testing.T) {
+	for _, test := range []struct {
+		name         string
+		availability string
+	}{
+		{name: "removed Copy", availability: catalog.CopyAvailabilityRemoved},
+		{name: "present Copy without identity proof", availability: catalog.CopyAvailabilityPresent},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			fixture := newCanonicalPgFixture(t)
+			seeded := seedCanonicalPgManifestJob(t, fixture.ctx, fixture.pool, fixture.bindingID, "30",
+				acquisition.StateAwaitingCanonical, "canonical-worker-a", 1, 1, 5, canonicalPgLeaseEnd(), nil)
+			copyRecord := seedCanonicalPgCopy(t, fixture.ctx, fixture.pool, fixture.bindingID, "30",
+				"resource-replay-only-30", nil, test.availability)
+			plan := acquisition.CanonicalPlan{
+				ManifestID: seeded.manifestID, JobID: seeded.jobID, Owner: seeded.owner,
+				ExpectedClaim: seeded.claim, Ready: true, ResultCopyID: copyRecord.ID,
+				ManifestState: acquisition.StateReady, JobState: jobs.StateSucceeded, Now: canonicalPgNow(),
+			}
+			if err := validateCanonicalPlan(plan); err != nil {
+				t.Fatalf("replay-only plan shape should remain valid for historical READY: %v", err)
+			}
+			if _, err := fixture.repository.CommitCanonical(fixture.ctx, plan); !errors.Is(err, acquisition.ErrInvalidCanonicalRequest) {
+				t.Fatalf("CommitCanonical() error = %v, want rejection of fresh replay-only plan", err)
+			}
+			canonicalPgAssertUntouched(t, fixture, seeded, acquisition.StateAwaitingCanonical)
+		})
+	}
+}
+
+func TestPostgresCanonicalFreshPlanMatchesLockedManifest(t *testing.T) {
+	t.Run("Copy in another ACTIVE binding", func(t *testing.T) {
+		fixture := newCanonicalPgFixture(t)
+		otherBinding := storage.BindingID("3c000000-0000-4000-8000-0000000000f1")
+		seedStorageBinding(t, fixture.ctx, fixture.pool, otherBinding, "canonical-other-root")
+		seeded := seedCanonicalPgManifestJob(t, fixture.ctx, fixture.pool, fixture.bindingID, "31",
+			acquisition.StateAwaitingCanonical, "canonical-worker-a", 1, 1, 5, canonicalPgLeaseEnd(), nil)
+		copyRecord := seedCanonicalPgCopy(t, fixture.ctx, fixture.pool, otherBinding, "31",
+			"resource-other-binding-31", nil, catalog.CopyAvailabilityPresent)
+		plan := canonicalPgReadyPlan(seeded, otherBinding, copyRecord, nil, canonicalPgNow())
+		if _, err := fixture.repository.CommitCanonical(fixture.ctx, plan); !errors.Is(err, acquisition.ErrCanonicalCopyBinding) {
+			t.Fatalf("CommitCanonical() error = %v, want ErrCanonicalCopyBinding", err)
+		}
+		canonicalPgAssertUntouched(t, fixture, seeded, acquisition.StateAwaitingCanonical)
+	})
+
+	for _, test := range []struct {
+		name            string
+		manifestVariant bool
+		planVariant     bool
+	}{
+		{name: "Manifest Variant but plan nil", manifestVariant: true},
+		{name: "Manifest nil but plan Variant", planVariant: true},
+		{name: "plan names a different Variant", manifestVariant: true, planVariant: true},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			fixture := newCanonicalPgFixture(t)
+			manifestVariant := catalog.VariantID(seedVariant(t, fixture.ctx, fixture.pool))
+			otherVariant := catalog.VariantID("92000000-0000-4000-8000-000000000004")
+			if _, err := fixture.pool.Exec(fixture.ctx, `
+INSERT INTO variants (variant_id, release_id, variant_key, attributes, status, created_at, updated_at)
+SELECT $1, release_id, 'other', '{}', 'ACTIVE', created_at, updated_at
+FROM variants WHERE variant_id = $2`, string(otherVariant), string(manifestVariant)); err != nil {
+				t.Fatalf("seed other Variant: %v", err)
+			}
+			var storedVariant, requestedVariant *catalog.VariantID
+			if test.manifestVariant {
+				storedVariant = &manifestVariant
+			}
+			if test.planVariant {
+				requestedVariant = &otherVariant
+			}
+			seeded := seedCanonicalPgManifestJob(t, fixture.ctx, fixture.pool, fixture.bindingID, "32",
+				acquisition.StateAwaitingCanonical, "canonical-worker-a", 1, 1, 5, canonicalPgLeaseEnd(), storedVariant)
+			copyRecord := seedCanonicalPgCopy(t, fixture.ctx, fixture.pool, fixture.bindingID, "32",
+				"resource-plan-variant-32", nil, catalog.CopyAvailabilityPresent)
+			plan := canonicalPgReadyPlan(seeded, fixture.bindingID, copyRecord, requestedVariant, canonicalPgNow())
+			if _, err := fixture.repository.CommitCanonical(fixture.ctx, plan); !errors.Is(err, acquisition.ErrCanonicalCopyClassified) {
+				t.Fatalf("CommitCanonical() error = %v, want ErrCanonicalCopyClassified", err)
+			}
+			canonicalPgAssertUntouched(t, fixture, seeded, acquisition.StateAwaitingCanonical)
+			if bound := readCanonicalPgCopyVariant(t, fixture.ctx, fixture.pool, copyRecord.ID); bound != nil {
+				t.Fatalf("Copy variant_id = %v, want unchanged NULL", bound)
+			}
+		})
 	}
 }
 
