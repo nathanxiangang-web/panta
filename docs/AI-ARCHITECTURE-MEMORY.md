@@ -3,8 +3,8 @@
 > Canonical short-form project memory for Architect/AI sessions.
 >
 > Last architecture-memory synchronization: **2026-09-30**
-> Active Gate: **3.10 / Issue #44 — Canonical confirmation, projected Copy, and READY finalization**
-> Governing corrections: **D-029** (IndexCore-owned observation), **D-030** (Git-first AI reconstruction), **D-032** (durable result_name locator), and **D-033** (READY anchored to one canonical projected Copy).
+> Active Gate: **3.11 / Issue #46 — One-claim acquisition stage dispatcher**
+> Governing corrections: **D-029** (IndexCore-owned observation), **D-030** (Git-first AI reconstruction), **D-032** (durable result_name locator), **D-033** (READY anchored to one canonical projected Copy), and **D-034** (one-claim stage routing).
 >
 > **Read this file before planning, reviewing, or authorizing any new Gate.**
 >
@@ -193,7 +193,7 @@ Semantics:
 - no provider FileId/DirId, OpenList path, Journal ordering, timing window, newest-item or only-item heuristic may replace result_name;
 - result_name is locator evidence only, never Canonical truth or READY.
 
-Gate 3.10 may later use the frozen locator for exact canonical confirmation.
+Gate 3.10 uses the frozen locator for exact canonical confirmation before READY.
 
 ## 5.2 Canonical READY anchor
 
@@ -219,6 +219,23 @@ Rules:
 - unresolved Copy is sufficient when the Manifest has no Variant intent;
 - if VariantID is present, the exact Copy must be bound to that Variant before READY;
 - result_copy_id is the stable historical acquisition result link.
+
+## 5.3 One-claim stage routing
+
+Gate 3.11 connects accepted bounded services into one state-driven application coordinator:
+
+```text
+already claimed RUNNING ACQUISITION Job (owner, ClaimAttempts)
+     ↓ fetch durable linked Manifest
+ACTIVE             → one ExecutionStep + one atomic ProviderOutcome
+AWAITING_VISIBILITY→ one trusted IndexCore Mutation Hint handoff
+AWAITING_CANONICAL → one bounded canonical confirmation
+terminal pair      → no-op/replay, no provider/IndexCore work
+```
+
+Never chain into a second stage in the same claim; a new claim is required.
+Do not consume FailureCount for ordinary stage waiting, do not bypass provider START_RESERVED, do not convert uncertain provider effects into blind retry.
+Gate 3.11 does not authorize an automatic scheduler, a continuous worker daemon, new stage Jobs, OpenList acquisition observation, Source Resolver parsing, or public API/UI.
 
 ## 6. Job Engine invariants
 
@@ -340,14 +357,15 @@ Accepted:
 - Gate 3.7 — atomic provider-stage outcome handoff
 - Gate 3.8 — IndexCore trusted Mutation Hint and observation handoff
 - Gate 3.9 — durable acquisition result locator
+- Gate 3.10 — canonical Q5 + projected Copy + atomic READY finalization
 
 Authorized now:
-- **Gate 3.10 — Issue #44 — Canonical confirmation, projected Copy, and READY finalization**
+- **Gate 3.11 — Issue #46 — One-claim acquisition stage dispatcher and controlled end-to-end orchestration**
 
 Not authorized yet:
 - direct Panta OpenList acquisition verifier;
 - direct acquisition Copy creation/upsert;
-- Gate 3.11+ work beyond current canonical finalization;
+- Gate 3.12+ work beyond current one-claim orchestration;
 - API/UI;
 - auth/quota/share;
 - Agent implementation;
