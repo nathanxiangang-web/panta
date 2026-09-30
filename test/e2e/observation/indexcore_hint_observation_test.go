@@ -84,6 +84,11 @@ const (
 	hintE2EMaxAttempts     = 5
 
 	hintE2EOwner = "gate38-hint-lease-owner"
+
+	// Gate 3.9 D-031: the frozen acquired direct-child identity the Gate 3.8 handoff
+	// now requires before it may submit a Hint. It is deliberately not sent in the
+	// Hint: IndexCore still refreshes the containing directory.
+	hintE2EExpectedName = "acquired-item.bin"
 )
 
 var (
@@ -837,10 +842,13 @@ func newHintE2EFixture() *hintE2EFixture {
 			SourceRef:              "opaque-provider-ref",
 			TargetStorageBindingID: hintE2EBindingID,
 			TargetPath:             hintE2ETargetPath,
-			JobID:                  &jobID,
-			State:                  acquisition.StateAwaitingVisibility,
-			CreatedAt:              seededAt,
-			UpdatedAt:              seededAt,
+			// Gate 3.9 D-031: the frozen direct-child identity the Gate 3.8 handoff
+			// now requires before it may submit a Hint.
+			ExpectedName: hintNamePointer(hintE2EExpectedName),
+			JobID:        &jobID,
+			State:        acquisition.StateAwaitingVisibility,
+			CreatedAt:    seededAt,
+			UpdatedAt:    seededAt,
 		},
 		job: jobs.Job{
 			ID:             hintE2EJobID,
@@ -890,17 +898,25 @@ INSERT INTO jobs (
 		*fixture.job.LeaseOwner); err != nil {
 		t.Fatalf("seed ACQUISITION Job: %v", err)
 	}
+	// Gate 3.9 (D-031): an AWAITING_VISIBILITY Manifest must carry its frozen
+	// direct-child identity, and the Gate 3.8 handoff requires it, so the fixture
+	// seeds the exact name the provider stage would have frozen.
 	if _, err := pool.Exec(ctx, `
 INSERT INTO acquisition_manifests (
     manifest_id, user_id, source_type, source_ref, expected_name, target_storage_binding_id,
     target_path, asset_id, release_id, variant_id, job_id, state, created_at, updated_at
-) VALUES ($1, NULL, $2, $3, NULL, $4, $5, NULL, NULL, NULL, $6, $7, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)`,
+) VALUES ($1, NULL, $2, $3, $8, $4, $5, NULL, NULL, NULL, $6, $7, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)`,
 		string(fixture.manifest.ID), fixture.manifest.SourceType, fixture.manifest.SourceRef,
 		string(fixture.manifest.TargetStorageBindingID), fixture.manifest.TargetPath,
-		string(*fixture.manifest.JobID), string(fixture.manifest.State)); err != nil {
+		string(*fixture.manifest.JobID), string(fixture.manifest.State),
+		hintE2EExpectedName); err != nil {
 		t.Fatalf("seed acquisition Manifest: %v", err)
 	}
 }
+
+// hintNamePointer returns a pointer to a copy, so the fixture literal stays
+// immutable and no caller can mutate shared state through it.
+func hintNamePointer(name string) *string { return &name }
 
 // assertSeeded proves the literal fixture also satisfies the frozen Gate 3.2
 // linkage contract and that the durable rows match it exactly.
