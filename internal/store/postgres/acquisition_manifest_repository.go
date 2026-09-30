@@ -17,7 +17,7 @@ import (
 
 const acquisitionManifestColumns = `
 manifest_id::text, user_id::text, source_type, source_ref, expected_name, result_name,
-target_storage_binding_id::text, target_path, asset_id::text, release_id::text,
+result_copy_id::text, target_storage_binding_id::text, target_path, asset_id::text, release_id::text,
 variant_id::text, job_id::text, state, created_at, updated_at`
 
 type acquisitionManifestDB interface {
@@ -44,11 +44,12 @@ func (repository *AcquisitionManifestRepository) CreateManifest(ctx context.Cont
 	}
 	_, err := repository.db.Exec(ctx, `
 INSERT INTO acquisition_manifests (
-    manifest_id, user_id, source_type, source_ref, expected_name,
-    target_storage_binding_id, target_path, asset_id, release_id, variant_id,
-    job_id, state, created_at, updated_at
-) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14)`,
-		string(manifest.ID), optionalID(manifest.UserID), manifest.SourceType, manifest.SourceRef, manifest.ExpectedName,
+    manifest_id, user_id, source_type, source_ref, expected_name, result_name,
+    result_copy_id, target_storage_binding_id, target_path, asset_id, release_id,
+    variant_id, job_id, state, created_at, updated_at
+) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16)`,
+		string(manifest.ID), optionalID(manifest.UserID), manifest.SourceType, manifest.SourceRef,
+		manifest.ExpectedName, manifest.ResultName, optionalCopyID(manifest.ResultCopyID),
 		string(manifest.TargetStorageBindingID), manifest.TargetPath, optionalID(manifest.AssetID),
 		optionalID(manifest.ReleaseID), optionalID(manifest.VariantID), optionalID(manifest.JobID),
 		string(manifest.State), manifest.CreatedAt, manifest.UpdatedAt,
@@ -89,10 +90,10 @@ WHERE manifest_id = $1`, string(id)))
 func scanAcquisitionManifest(row pgx.Row) (acquisition.Manifest, error) {
 	var manifest acquisition.Manifest
 	var manifestID, bindingID string
-	var userID, assetID, releaseID, variantID, jobID sql.NullString
+	var userID, assetID, releaseID, variantID, jobID, resultCopyID sql.NullString
 	err := row.Scan(
 		&manifestID, &userID, &manifest.SourceType, &manifest.SourceRef, &manifest.ExpectedName, &manifest.ResultName,
-		&bindingID, &manifest.TargetPath, &assetID, &releaseID, &variantID, &jobID,
+		&resultCopyID, &bindingID, &manifest.TargetPath, &assetID, &releaseID, &variantID, &jobID,
 		&manifest.State, &manifest.CreatedAt, &manifest.UpdatedAt,
 	)
 	if err != nil {
@@ -116,11 +117,23 @@ func scanAcquisitionManifest(row pgx.Row) (acquisition.Manifest, error) {
 		value := catalog.VariantID(variantID.String)
 		manifest.VariantID = &value
 	}
+	if resultCopyID.Valid {
+		value := catalog.CopyID(resultCopyID.String)
+		manifest.ResultCopyID = &value
+	}
 	if jobID.Valid {
 		value := jobs.JobID(jobID.String)
 		manifest.JobID = &value
 	}
 	return manifest, nil
+}
+
+// optionalCopyID renders an optional Panta Copy identity for persistence.
+func optionalCopyID(value *catalog.CopyID) any {
+	if value == nil {
+		return nil
+	}
+	return string(*value)
 }
 
 func optionalID[T ~string](value *T) *string {

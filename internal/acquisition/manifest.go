@@ -83,7 +83,12 @@ type Manifest struct {
 	// is separate from ExpectedName: intent is never rewritten by provider
 	// execution. It is nil until a provider success resolves it, and immutable
 	// afterwards.
-	ResultName             *string
+	ResultName *string
+	// ResultCopyID is the durable historical acquisition result link (D-033). It is
+	// set exactly once by the canonical-finalization transaction and links this
+	// acquisition to the one canonical projected Copy that confirmed it. Later Copy
+	// availability changes never rewrite it.
+	ResultCopyID           *catalog.CopyID
 	TargetStorageBindingID storage.BindingID
 	TargetPath             string
 	AssetID                *catalog.AssetID
@@ -295,6 +300,14 @@ func ValidateManifest(manifest Manifest) error {
 		return ErrInvalidArgument
 	}
 	if (manifest.State == StatePending && manifest.JobID != nil) || (manifest.State == StateActive && manifest.JobID == nil) {
+		return ErrInvalidArgument
+	}
+	// D-033: a finalized acquisition carries the Copy that confirmed it, and only a
+	// finalized acquisition may carry one.
+	if manifest.State == StateReady && manifest.ResultCopyID == nil {
+		return ErrInvalidArgument
+	}
+	if manifest.State != StateReady && manifest.ResultCopyID != nil {
 		return ErrInvalidArgument
 	}
 	normalized, err := NormalizeTargetPath(manifest.TargetPath)
