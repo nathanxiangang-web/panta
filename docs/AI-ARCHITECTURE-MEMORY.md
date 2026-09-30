@@ -2,6 +2,10 @@
 
 > Canonical short-form project memory for Architect/AI sessions.
 >
+> Last architecture-memory synchronization: **2026-09-30**
+> Active Gate: **3.8 / Issue #39 — IndexCore trusted Mutation Hint and observation handoff**
+> Governing corrections: **D-029** (IndexCore-owned observation) and **D-030** (Git-first AI reconstruction).
+>
 > **Read this file before planning, reviewing, or authorizing any new Gate.**
 >
 > If chat context, an old issue, an old PR description, README text, or an older decision conflicts with this file plus the latest accepted Decision Log / Project State, **Git wins and the newer accepted decision wins**.
