@@ -3,8 +3,8 @@
 > Canonical short-form project memory for Architect/AI sessions.
 >
 > Last architecture-memory synchronization: **2026-09-30**
-> Active Gate: **3.15 / Issue #54 — Fail-closed runtime composition and controlled real-protocol acquisition E2E**
-> Governing corrections: **D-029** (IndexCore-owned observation), **D-030** (Git-first AI reconstruction), **D-032** (durable result_name locator), **D-033** (READY anchored to one canonical projected Copy), **D-034** (one-claim stage routing), **D-035** (type-scoped claiming and atomic recovery), **D-036** (one explicit runner tick), **D-037** (opt-in worker lifecycle), and **D-038** (fail-closed runtime graph and secret/trust boundaries).
+> Active Gate: **3.16 / Issue #56 — Protected operator bootstrap, read-only preflight and explicit worker startup**
+> Governing corrections: **D-029** (IndexCore-owned observation), **D-030** (Git-first AI reconstruction), **D-032** (durable result_name locator), **D-033** (READY anchored to one canonical projected Copy), **D-034** (one-claim stage routing), **D-035** (type-scoped claiming and atomic recovery), **D-036** (one explicit runner tick), **D-037** (opt-in worker lifecycle), **D-038** (fail-closed runtime graph and secret/trust boundaries), and **D-039** (protected operator bootstrap/preflight).
 >
 > **Read this file before planning, reviewing, or authorizing any new Gate.**
 >
@@ -286,6 +286,14 @@ Require validated schema v12, complete mandatory clients, injected secrets and e
 
 Default disabled process must remain side-effect-free. Controlled PostgreSQL+HTTP-fake E2E is in scope; real 115 account secrets and live deployment are not yet authorized. No direct Panta OpenList verification, Job Engine duplication, or new schema is allowed.
 
+## 5.8 Protected operator bootstrap
+
+D-039 / Gate 3.16: stock CLI remains disabled and side-effect-free; an explicit read-only preflight validates externally protected credentials, trusted Hint configuration, schema v12 and exact active ProviderID/ConnectionID/CredentialRef coverage **without** claiming Jobs, submitting hints, migrating, contacting 115, or mutating any data.
+
+Explicit operator worker start reuses exactly one accepted D-038 runtime graph with a restricted external SecretResolver, D-037 serial Worker and SIGINT/SIGTERM cancellation. No raw cookie/token in CLI process args, logs, Git or Panta tables; no silent credential fallback.
+
+Gate 3.16 does not authorize AI to run a real 115 account download or deploy to production. Only local controlled PostgreSQL/HTTP fakes are in-scope.
+
 ## 6. Job Engine invariants
 
 The ACQUISITION Job is the durable execution safety boundary.
@@ -411,14 +419,15 @@ Accepted:
 - Gate 3.12 — acquisition-only claims and atomic expired-lease recovery
 - Gate 3.13 — bounded one-shot acquisition RunOnce
 - Gate 3.14 — opt-in serial acquisition worker lifecycle
+- Gate 3.15 — fail-closed runtime composition and controlled PostgreSQL+HTTP E2E
 
 Authorized now:
-- **Gate 3.15 — Issue #54 — Fail-closed runtime composition and controlled real-protocol acquisition E2E**
+- **Gate 3.16 — Issue #56 — Protected operator bootstrap, read-only preflight and explicit worker startup**
 
 Not authorized yet:
 - direct Panta OpenList acquisition verifier;
 - direct acquisition Copy creation/upsert;
-- real 115 account acceptance, production deployment, public API/UI, and Gate 3.16+ work beyond controlled runtime composition;
+- real 115 account acceptance, production deployment, public API/UI, and Gate 3.17+ work beyond operator bootstrap;
 - API/UI;
 - auth/quota/share;
 - Agent implementation;
