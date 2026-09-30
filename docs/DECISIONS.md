@@ -921,3 +921,22 @@ Rules:
 - no new provider task side effect permission, OpenList verification, Copy writer, Job family, queue, schema migration or background worker loop.
 
 This Gate delivers a reusable bounded RunOnce capability. Continuous scheduling, `Application.Run` wiring, live credential configuration and deployment remain separately authorized later work.
+
+## D-037 — Opt-in single-process acquisition worker with one in-flight RunOnce
+
+**Status:** Accepted
+
+Gate 3.13 provides a bounded explicit RunOnce. Gate 3.14 authorizes a controlled serial lifecycle loop without taking ownership of Job state, provider tasks or canonical truth.
+
+Rules:
+- one worker process loop executes no more than one RunOnce at a time; each tick is independent, and never cascades stages;
+- acquisition worker is disabled by default. Enabled startup with missing required dependencies fails closed, never pretends to operate;
+- worker identity is stable per process and unique across simultaneous replicas; no hardcoded global owner;
+- validated schedule interval, tick timeout, lease duration (with safety margin), retry-at policy and per-tick recovery/projector bounds prevent busy spin or lease overrun by design;
+- IDLE, RECOVERY_ONLY and successful stage handoff are normal outcomes; transient error handling must use bounded delays and must never issue Job-only Fail/Succeed/RetryAt;
+- ErrLeaseRecoveryDebt is a fatal stop for claiming new work pending explicit operator repair;
+- cancellation stops new ticks and propagates to an in-flight RunOnce. D-035 recovery and START_RESERVED remain the durable restart safety barriers;
+- only D-033 canonical stage may mark a Manifest READY and Job SUCCEEDED;
+- no new worker queue, direct OpenList verification, second Copy writer, new Job type, DB migration, or autonomous agent scheduler.
+
+Gate 3.14 builds the opt-in lifecycle/service and safe process configuration seam; **production PostgreSQL/IndexCore/115 credential wiring and deployment are not yet authorized**. Enabling an unwired process must fail loudly. This is distinct from an operational E2E deployment.
