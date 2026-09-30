@@ -62,20 +62,31 @@ Never derive these from each other:
 
 ## Acquisition result identity
 
-Before provider success may advance a new acquisition beyond the provider stage:
+Before provider success may advance automatically beyond the provider stage:
+
+```text
+valid provider-observed TaskStatus.ResultName
+        >
+Manifest.ExpectedName fallback
+        ↓
+Manifest.result_name
+```
+
+Canonical candidate identity is later formed from:
 
 ```text
 StorageBinding.indexcore_root_id
 + Manifest.target_path
-+ Manifest.expected_name
++ Manifest.result_name
 ```
 
 - `target_path` is the directory scope refreshed by IndexCore.
-- `expected_name` is one exact direct child under that directory.
-- It may be absent at Manifest creation, but must be frozen before `AWAITING_VISIBILITY`.
-- For 115, only successful `OfflineTask.Name` may supply it.
+- `expected_name` is request-time intent/fallback and must not be rewritten by provider execution.
+- `result_name` is the immutable durable provider-stage locator.
+- A valid provider result wins; blank/absent provider result may use ExpectedName fallback.
+- Invalid nonblank provider result fails closed; do not silently fall back.
 - Never use provider FileId/DirId, OpenList paths, Journal order, timing, newest-item, or only-item heuristics as a substitute.
-- This identity still does not prove canonical presence; IndexCore confirmation remains required.
+- This locator still does not prove canonical presence; IndexCore confirmation remains required.
 
 ## Job safety
 
