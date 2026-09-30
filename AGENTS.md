@@ -151,6 +151,18 @@ bounded expired-acquisition linked-pair recovery
 
 Recovery debt stops new claims in the tick. Stage errors must not be translated into generic Job-only Fail/Succeed/RetryAt writes; that would desynchronize the Manifest. Pass the actual claimed owner/ClaimAttempts. No autonomous worker daemon, timer, process startup wiring or live provider-credential integration yet.
 
+## Opt-in acquisition worker lifecycle
+
+Active Gate 3.14 / Issue #52 / D-037: serial opt-in lifecycle around the accepted RunOnce.
+
+- Worker disabled by default; an enabled process with no real injected dependencies must fail closed at startup.
+- Use exactly one worker loop and one in-flight RunOnce per process; a slow tick cannot overlap another.
+- Owner stable for the process and unique across replicas; bounded interval, deadline, retry and lease safety margin; never busy spin.
+- Treat IDLE/recovery-only/completed tick as normal, pace transient errors, stop on corrupt linked-pair recovery debt.
+- Propagate cancellation, no detached task goroutines, no new claim after stop.
+- Do not mutate Jobs on runner errors, recreate provider tasks or claim canonical READY from a worker-level result.
+- Real 115 credential/IndexCore/PostgreSQL startup graph and deployment remain later authorized work.
+
 ## Job safety
 
 - `claim_attempts` = monotonic claim-generation fence.
