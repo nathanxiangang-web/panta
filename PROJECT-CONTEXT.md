@@ -101,12 +101,19 @@ Provider-specific implementation details must remain below the provider contract
 
 ## 6. 115 MVP role
 
-115 currently provides the first:
-- Storage Provider;
-- Cloud Downloader Provider;
-- Share Provider.
+115 is the first provider used to prove Panta's provider-neutral model.
 
-Implementation may initially use 115 MCP and may later change to official API or another library without changing the Panta domain contract.
+Current implemented provider slice:
+- Cloud Downloader Provider: `internal/providers/115`;
+- runtime library pinned to `github.com/SheltonZhu/115driver v1.3.5`;
+- exact URI -> offline task -> `info_hash` mapping;
+- connection-scoped authenticated session selected by ProviderID + ConnectionID + CredentialRef.
+
+Not yet implemented:
+- 115 ShareProvider;
+- a separate Panta StorageProvider scanner.
+
+Existing-storage observation remains OpenList -> IndexCore, not a 115 scanner inside Panta. Future provider implementation may change without changing the Panta domain contract.
 
 ## 7. Cloud-download synchronization
 
