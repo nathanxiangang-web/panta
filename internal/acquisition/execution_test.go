@@ -784,8 +784,8 @@ func TestExecutionStepRejectsInvalidProviderTaskReference(t *testing.T) {
 			fixture := newExecutionFixture(t)
 			fixture.provider.startReference = contracts.TaskReference{Value: reference}
 
-			if _, err := fixture.service.Execute(context.Background(), fixture.request); !errors.Is(err, acquisition.ErrProviderTaskReference) {
-				t.Fatalf("Execute() error = %v, want ErrProviderTaskReference", err)
+			if _, err := fixture.service.Execute(context.Background(), fixture.request); !errors.Is(err, acquisition.ErrProviderTaskReference) || !errors.Is(err, acquisition.ErrExecutionSideEffectUncertain) {
+				t.Fatalf("Execute() error = %v, want invalid reference and uncertain side effect", err)
 			}
 			// The start reservation survives, so the external side effect can
 			// never be repeated even though the reference was unusable.
@@ -944,16 +944,17 @@ func TestExecutionStepRejectsReferenceCommitWithoutReservation(t *testing.T) {
 	}
 }
 
-func TestExecutionStepProviderStartFailureIsAttributedAndNotPersisted(t *testing.T) {
+func TestExecutionStepProviderStartFailureIsAttributedAndReserved(t *testing.T) {
 	fixture := newExecutionFixture(t)
-	fixture.provider.startError = errors.New("provider transport exploded")
+	startFailure := errors.New("provider transport exploded")
+	fixture.provider.startError = startFailure
 
 	_, err := fixture.service.Execute(context.Background(), fixture.request)
 	if err == nil {
 		t.Fatal("Execute() succeeded, want attributed provider failure")
 	}
-	if errors.Is(err, acquisition.ErrExecutionSideEffectUncertain) {
-		t.Fatalf("pre-side-effect failure must not be uncertain: %v", err)
+	if !errors.Is(err, acquisition.ErrExecutionSideEffectUncertain) || !errors.Is(err, startFailure) {
+		t.Fatalf("post-reservation start failure = %v, want uncertainty and original cause", err)
 	}
 	if !strings.Contains(err.Error(), "provider transport exploded") {
 		t.Fatalf("error %v does not attribute the provider failure", err)
