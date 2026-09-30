@@ -88,6 +88,26 @@ StorageBinding.indexcore_root_id
 - Never use provider FileId/DirId, OpenList paths, Journal order, timing, newest-item, or only-item heuristics as a substitute.
 - This locator still does not prove canonical presence; IndexCore confirmation remains required.
 
+## Canonical completion
+
+READY is not authorized by provider success or Hint acceptance.
+
+For Gate 3.10:
+```text
+root_id + target_path + result_name
+  -> exact Q5 PRESENT resource
+  -> existing Q8 Journal Projector
+  -> exact PRESENT Copy
+  -> optional monotonic Variant binding
+  -> result_copy_id + READY + Job SUCCEEDED
+```
+
+- zero Q5 matches is pending;
+- Q5 ambiguity/multiple matches fails closed;
+- acquisition must never create/upsert Copy directly;
+- reuse the existing projector in bounded one-page steps;
+- `result_copy_id` is the durable final acquisition result reference.
+
 ## Job safety
 
 - `claim_attempts` = monotonic claim-generation fence.
