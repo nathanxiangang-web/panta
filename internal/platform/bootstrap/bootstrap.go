@@ -22,6 +22,15 @@ var ErrUnsafeBootstrap = errors.New("unsafe acquisition bootstrap configuration 
 const maxConfigBytes = 32 << 10
 const maxSecretBytes = 16 << 10
 
+// ReadProtectedFile is shared by explicit operator inputs. It returns bytes
+// only to the caller; paths and contents are never included in its errors.
+func ReadProtectedFile(path string, limit int64) ([]byte, error) {
+	if !filepath.IsAbs(path) || filepath.Clean(path) != path || limit < 1 {
+		return nil, ErrUnsafeBootstrap
+	}
+	return readMountedFile(filepath.Dir(path), filepath.Base(path), limit)
+}
+
 type fileConfig struct {
 	SecretDir     string        `json:"secret_dir"`
 	HintBaseURL   string        `json:"hint_base_url"`
@@ -74,10 +83,7 @@ func Load(ctx context.Context, configPath string) (runtime.RuntimeDependencies, 
 	if err := ctx.Err(); err != nil {
 		return runtime.RuntimeDependencies{}, err
 	}
-	if !filepath.IsAbs(configPath) || filepath.Clean(configPath) != configPath {
-		return runtime.RuntimeDependencies{}, ErrUnsafeBootstrap
-	}
-	content, err := readMountedFile(filepath.Dir(configPath), filepath.Base(configPath), maxConfigBytes)
+	content, err := ReadProtectedFile(configPath, maxConfigBytes)
 	if err != nil {
 		return runtime.RuntimeDependencies{}, ErrUnsafeBootstrap
 	}
