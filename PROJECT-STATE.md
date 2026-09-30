@@ -6,7 +6,7 @@
 
 **MVP implementation — Gate 3**
 
-Gate 0, Gate 1, and Gate 2 are formally accepted and closed. Gate 3.1 through Gate 3.12 are accepted and merged. Gate 3.13 is authorized and in progress.
+Gate 0, Gate 1, and Gate 2 are formally accepted and closed. Gate 3.1 through Gate 3.13 are accepted and merged. Gate 3.14 is authorized and in progress.
 
 ## Accepted baseline
 
@@ -822,9 +822,9 @@ Until the relevant gate is accepted, do not implement:
 
 ## Next architect action
 
-Review Gate 3.13 PR against **Issue #50 / D-036**: bounded recovery-before-claim sequencing, ACQUISITION-only ClaimNextByType, one already-claimed Job routed to StageDispatcher only once per tick, exact generation/owner propagation, fail-closed errors that never write Job-only terminal states, and real PostgreSQL recovery/idle/one-stage integration tests.
+Review Gate 3.14 PR against **Issue #52 / D-037**: explicit opt-in disabled-by-default serial worker lifecycle, one in-flight RunOnce, bounded cadence/deadline-vs-lease policy, unique stable owner, cancellation and error handling, fatal recovery-debt stop, no Job-only error repair, controlled PostgreSQL evidence and all prior Gate regressions.
 
-Do not authorize a continuous worker loop or Gate 3.14 until Gate 3.13 is accepted.
+Do not authorize real 115/IndexCore credential startup, production deployment or Gate 3.15 until Gate 3.14 is accepted.
 
 
 ## Current bounded task
@@ -953,9 +953,24 @@ Explicitly deferred:
 
 ### Gate 3.13 — Bounded one-shot acquisition runner and recovery integration
 
-Status: **AUTHORIZED / IN PROGRESS**
+Status: **ACCEPTED**
 
-Tracking: GitHub Issue #50
+Tracking: GitHub Issue #50 / PR #51
+
+Merged:
+- exact reviewed head `23b6098f8c8a59d55ba7834ad41b96ee6724aeaa`;
+- squash commit `115146c2163d218c968e72b9741bb46ec24202c3`.
+
+Acceptance evidence:
+- RunOnce performs bounded D-035 linked recovery before type-scoped ClaimNextByType(ACQUISITION) and at most one D-034 StageDispatcher;
+- returns typed IDLE, RECOVERY_ONLY, STAGE_COMPLETED and typed recovery/claim/lease/stage/cancel errors;
+- recovery debt blocks claiming and surfaces partial recovered count;
+- passes actual JobID/LeaseOwner/ClaimAttempts, normal pending does not consume FailureCount;
+- Stage errors never cause Job-only Fail/Succeed/RetryAt mutations;
+- real PostgreSQL evidence for two separate one-stage ticks, post-reservation provider recovery, corrupt-linked debt, and stage-error→expired linked recovery;
+- Architect review `5366932699` ACCEPTED;
+- exact-head CI run `36720788572` all three jobs SUCCESS;
+- schema unchanged at v12.
 
 Governing decision: D-036.
 
@@ -970,3 +985,26 @@ Explicitly deferred:
 - autonomous worker loop/timers/process wiring/deployment;
 - credential config and live 115/IndexCore runtime;
 - Source Resolver, auth/quota/share/access, Agent, public API/UI.
+
+## Current bounded task
+
+### Gate 3.14 — Opt-in serial acquisition worker lifecycle and bounded scheduling
+
+Status: **AUTHORIZED / IN PROGRESS**
+
+Tracking: GitHub Issue #52
+
+Governing decision: D-037.
+
+Scope:
+- run D-036 RunOnce repeatedly through one sequential, controlled lifecycle without overlapping ticks;
+- worker disabled by default; opt-in startup fails closed if dependencies are missing;
+- validate worker owner uniqueness, bounded tick interval and deadline/lease safety policy;
+- observable transient errors with paced retries; fatal recovery-debt stop;
+- graceful cancellation and no extra claims after shutdown;
+- controlled PostgreSQL and regression tests; no new migration expected.
+
+Explicitly deferred:
+- real production PostgreSQL/IndexCore/115 secret session composition and deployment;
+- public API/UI, Source Resolver, share/auth/quota/access, Agent;
+- distributed scheduling or multiple worker concurrency.
