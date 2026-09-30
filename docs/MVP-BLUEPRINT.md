@@ -11,9 +11,9 @@ The MVP is successful when a user can:
 - view that physical resource in a stable logical resource model;
 - submit a supported source while logged in;
 - let 115 cloud download acquire it;
-- observe the result through OpenList;
-- trigger a bounded IndexCore refresh;
-- see the resulting Copy become available in Panta;
+- notify IndexCore of the affected root/scope after provider completion;
+- let the IndexCore-owned OpenList collector perform bounded scoped verification;
+- see canonical IndexCore/Journal evidence make the resulting Copy available in Panta;
 - create a provider share while logged in;
 - use the same product domain with provider-specific code isolated behind contracts.
 
@@ -235,8 +235,12 @@ Panta Catalog Projector
 
 Panta must not:
 - read OpenList DB directly;
+- call OpenList directly to decide acquisition visibility/canonical presence;
+- create a second production OpenList scanner or known-path verification lane;
 - read IndexCore DB directly;
 - infer physical deletion merely because a product record is absent.
+
+For acquisition synchronization, Panta sends a trusted Mutation Hint to IndexCore. IndexCore then owns OpenList scoped verification and Canonical/Journal production.
 
 ## 7. Storage bindings
 
@@ -311,13 +315,16 @@ DownloaderProvider
       ↓
 provider reports completion
       ↓
-Storage Visibility Verifier
+Manifest AWAITING_VISIBILITY
       ↓
-OpenList sees expected result
+Panta → trusted IndexCore Mutation Hint
+  root_id   = StorageBinding.indexcore_root_id
+  scope_key = Manifest.target_path
+  reason    = POSSIBLE_CHANGE
       ↓
-IndexSync issues mutation hint
+Manifest AWAITING_CANONICAL
       ↓
-IndexCore scoped refresh
+IndexCore-owned OpenList scoped verification
       ↓
 Canonical confirmation / Journal
       ↓
@@ -326,15 +333,19 @@ Catalog Projector
 Copy READY
 ```
 
-### Required rule
+### Required rules
 
 `provider task completed` is not the same as `Copy READY`.
 
-READY requires canonical confirmation from IndexCore.
+IndexCore Hint `202 Accepted` is not canonical confirmation and is not `READY`.
+
+Panta does not directly call OpenList to verify acquisition visibility. OpenList remains inside the IndexCore-owned observation pipeline.
+
+READY requires canonical confirmation from IndexCore Query/Journal plus the corresponding Panta Copy projection/association.
 
 ### No blind sleep
 
-A short delay may be part of retry policy, but the success criterion is observed visibility/canonical confirmation, not “wait 10 seconds and assume.”
+A short delay may be part of scheduling/retry policy, but the success criterion is canonical IndexCore evidence, not “wait 10 seconds and assume.”
 
 ## 10. Acquisition Manifest
 
@@ -500,7 +511,7 @@ panta/
 │   │   └── registry/
 │   ├── integrations/
 │   │   ├── indexcore/
-│   │   ├── openlist/
+│   │   ├── openlist/   # optional access-layer integration only; not acquisition truth
 │   │   └── agent/
 │   └── projector/
 ├── providers/
@@ -522,7 +533,7 @@ Build:
 - DB migrations;
 - provider ports;
 - mock provider;
-- IndexCore/OpenList adapter interfaces;
+- IndexCore contracts plus any future OpenList access-layer port kept separate from canonical observation;
 - Job Engine minimum state;
 - test harness.
 
@@ -567,15 +578,18 @@ Build:
 - 115 Downloader adapter;
 - Source Resolver for deterministic source types;
 - Acquisition Manifest;
-- Storage Visibility Verifier;
-- IndexSync hint integration;
-- acquisition job state/retry.
+- durable provider-task side-effect fence;
+- connection-scoped provider session/credential boundary;
+- trusted IndexCore Mutation Hint integration;
+- acquisition Job stage handoff/retry;
+- IndexCore canonical confirmation / Journal completion path.
 
 Accept when:
 - supported source creates a real 115 cloud-download task;
-- completion is verified through OpenList;
-- only target scope is refreshed in IndexCore;
-- Journal causes the expected Copy to become READY;
+- provider completion queues the affected `indexcore_root_id + target_path` through the trusted IndexCore Hint contract;
+- Panta performs no direct acquisition-time OpenList verification;
+- IndexCore performs the bounded OpenList-backed scoped verification;
+- Canonical/Journal evidence causes the expected Copy to become READY;
 - no normal full-root scan is required;
 - restart/failure leaves explicit recoverable state.
 
@@ -645,7 +659,34 @@ Panta MVP is architecturally acceptable only if all are true:
 2. Existing storage is observed through OpenList and canonically confirmed by IndexCore.
 3. Product logical identity is Asset/Release/Variant/Copy, not raw path.
 4. 115-specific implementation is isolated behind provider contracts.
-5. Cloud-download completion is verified through OpenList + IndexCore before READY.
+5. Cloud-download completion is handed to the IndexCore-owned OpenList observation pipeline and canonically confirmed by IndexCore before READY. Panta does not directly verify OpenList during acquisition.
 6. Product DB never becomes a second physical-resource truth.
 7. Agent can be removed without breaking deterministic resource flows.
 8. A second provider can be added without rewriting product domain modules.
+
+
+## 21. AI architecture reconstruction protocol
+
+Long-running AI-assisted development must not depend on accumulated chat context.
+
+Before any new Gate is designed, authorized, or reviewed, reconstruct current truth from:
+
+```text
+docs/AI-ARCHITECTURE-MEMORY.md
+        ↓
+PROJECT-STATE.md
+        ↓
+docs/DECISIONS.md
+        ↓
+PROJECT-CONTEXT.md
+        ↓
+this blueprint
+        ↓
+current Issue / PR
+        ↓
+exact code + tests + CI
+```
+
+If an older section of this blueprint, an old Issue/PR, or chat memory conflicts with a newer explicit accepted Decision, the newer Decision wins. The contradiction must then be repaired in the project-memory documents rather than carried forward implicitly.
+
+Do not create a new module or external integration lane until Git has been searched for an already accepted owner of that responsibility.
