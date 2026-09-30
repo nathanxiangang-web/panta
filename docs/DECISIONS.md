@@ -842,3 +842,38 @@ Rules:
 Migration v12 adds nullable `acquisition_manifests.result_copy_id` referencing `copies(copy_id)`, with no default and no historical backfill. New READY writes require a result_copy_id while historical pre-Gate-3.10 rows remain upgrade-compatible.
 
 Gate 3.10 does not add a continuous worker daemon, direct OpenList access, direct IndexCore database access, Search-based guessing, or a second Copy projection path.
+
+## D-034 — One claimed ACQUISITION Job executes at most one persisted Manifest stage
+
+**Status:** Accepted
+
+Gate 3.10 completed the bounded provider-neutral, observation, and canonical stage components. Gate 3.11 wires them without replacing their owners.
+
+Stage routing is determined exclusively by the currently persisted Acquisition Manifest:
+
+```text
+ACTIVE
+  -> bounded ExecutionStepService.Execute
+  -> atomic ProviderOutcomeService.Commit
+
+AWAITING_VISIBILITY
+  -> bounded RefreshStep.Submit
+
+AWAITING_CANONICAL
+  -> bounded CanonicalConfirmation.Confirm
+```
+
+Rules:
+- one ACQUISITION Job spans all stages; no stage-specific duplicate Job;
+- one acquired Job claim generation grants **at most one** stage invocation, regardless of how quickly that stage completes;
+- the next stage requires a separately claimed Job; no same-invocation cascade or sleep/poll loop;
+- stage selection is based on durable Manifest.State, not guessed provider status, elapsed time, OpenList state, or a transient in-memory cursor;
+- active work requires the linked ACQUISITION Job, matching owner and claim generation and the existing database-time fenced commit;
+- a terminal Job + corresponding terminal Manifest is a committed result/replay, not a fresh lease-authorized execution; it does no external work;
+- provider result-name propagation and D-026 outcome translations remain closed;
+- uncertain provider side effects must follow explicit recovery, never blind StartDownload replay;
+- normal provider polling, Hint/IndexCore propagation and canonical pending do not consume FailureCount; ClaimAttempts remains the generation fence;
+- provider execution, IndexCore Mutation Hint, Journal Projector, and Copy state retain their accepted owners;
+- no direct Panta-to-OpenList acquisition visibility validation.
+
+Gate 3.11 builds a bounded one-claim coordinator and controlled multi-claim evidence **without** an automatic scheduler/worker daemon. Later runtime wiring and cadence require a separately authorized Gate. No new database migration is required by this decision.
