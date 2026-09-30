@@ -6,7 +6,7 @@
 
 **MVP implementation — Gate 3**
 
-Gate 0, Gate 1, and Gate 2 are formally accepted and closed. Gate 3.1 through Gate 3.11 are accepted and merged. Gate 3.12 is authorized and in progress.
+Gate 0, Gate 1, and Gate 2 are formally accepted and closed. Gate 3.1 through Gate 3.12 are accepted and merged. Gate 3.13 is authorized and in progress.
 
 ## Accepted baseline
 
@@ -822,9 +822,9 @@ Until the relevant gate is accepted, do not implement:
 
 ## Next architect action
 
-Review Gate 3.12 PR against **Issue #48 / D-035**: type-scoped ACQUISITION claiming, atomic expired-lease recovery of Manifest + Job using DB time and Manifest-before-Job locks, preservation of provider START_RESERVED fences, generic recovery non-interference, and real PostgreSQL concurrency/rollback/regression evidence.
+Review Gate 3.13 PR against **Issue #50 / D-036**: bounded recovery-before-claim sequencing, ACQUISITION-only ClaimNextByType, one already-claimed Job routed to StageDispatcher only once per tick, exact generation/owner propagation, fail-closed errors that never write Job-only terminal states, and real PostgreSQL recovery/idle/one-stage integration tests.
 
-Do not authorize an autonomous worker loop or Gate 3.13 before Gate 3.12 is accepted.
+Do not authorize a continuous worker loop or Gate 3.14 until Gate 3.13 is accepted.
 
 
 ## Current bounded task
@@ -914,9 +914,25 @@ Explicitly deferred:
 
 ### Gate 3.12 — Acquisition-only Job claim and atomic expired-lease recovery
 
-Status: **AUTHORIZED / IN PROGRESS**
+Status: **ACCEPTED**
 
-Tracking: GitHub Issue #48
+Tracking: GitHub Issue #48 / PR #49
+
+Merged:
+- exact reviewed head `1740567391fbeb746520053446a3915897a8bf1c`;
+- squash commit `2df41b8edfcacc606d8403130bba2ac4657378f3`.
+
+Acceptance evidence:
+- ClaimNextByType atomically restricts to ACQUISITION; mixed-type and concurrent one-winner claims verified;
+- PostgreSQL DB-time expired RUNNING lease recovery locks Manifest before Job and rechecks exact versioned payload/link/states;
+- Manifest + Job both atomically become RECOVERY_REQUIRED or remain unchanged;
+- corrupted links return typed recovery debt and do not fabricate states;
+- provider START_RESERVED/REFERENCE_KNOWN, result locator, ClaimAttempts and FailureCount unchanged;
+- generic expired lease sweep explicitly excludes ACQUISITION;
+- PostgreSQL concurrency/rollback/replay/malformed-link tests all green;
+- Architect review `5366250277` ACCEPTED;
+- exact-head CI `36712927240` all three groups SUCCESS;
+- schema unchanged at v12.
 
 Governing decision: D-035.
 
@@ -931,4 +947,26 @@ Scope:
 Explicitly deferred:
 - continuous worker / ClaimNext scheduler / process wiring;
 - real provider credentials/deployment/periodic cadence;
+- Source Resolver, auth/quota/share/access, Agent, public API/UI.
+
+## Current bounded task
+
+### Gate 3.13 — Bounded one-shot acquisition runner and recovery integration
+
+Status: **AUTHORIZED / IN PROGRESS**
+
+Tracking: GitHub Issue #50
+
+Governing decision: D-036.
+
+Scope:
+- one explicit RunOnce invocation: bounded acquisition pair recovery → at most one ClaimNextByType(ACQUISITION) → at most one D-034 StageDispatcher invocation;
+- stop claiming on corrupt-link recovery debt or recovery store error;
+- exact owner/ClaimAttempts handoff, truthful IDLE / RECOVERY / STAGE results, no blind Job-only error transitions;
+- real PostgreSQL controlled integration with terminal replay, pending and recovery cases;
+- no new migrations planned (schema remains v12).
+
+Explicitly deferred:
+- autonomous worker loop/timers/process wiring/deployment;
+- credential config and live 115/IndexCore runtime;
 - Source Resolver, auth/quota/share/access, Agent, public API/UI.
