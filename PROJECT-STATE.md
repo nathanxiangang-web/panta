@@ -6,7 +6,7 @@
 
 **MVP implementation — Gate 3**
 
-Gate 0, Gate 1, and Gate 2 are formally accepted and closed. Gate 3.1 through Gate 3.9 are accepted and merged. Gate 3.10 is authorized and in progress.
+Gate 0, Gate 1, and Gate 2 are formally accepted and closed. Gate 3.1 through Gate 3.10 are accepted and merged. Gate 3.11 is authorized and in progress.
 
 ## Accepted baseline
 
@@ -822,18 +822,34 @@ Until the relevant gate is accepted, do not implement:
 
 ## Next architect action
 
-Review the Gate 3.10 PR against **Issue #44 / D-033**: exact Q5 candidate resolution, ambiguity fail-closed semantics, bounded reuse of the existing Journal Projector, exact PRESENT Copy verification, optional monotonic Variant binding, immutable result_copy_id, atomic READY + Job SUCCEEDED finalization, migration v12, and full Gate 1/2/3.1-3.9 regression.
+Review the Gate 3.11 PR against **Issue #46 / D-034**: exactly one durable Manifest-selected stage per previously claimed ACQUISITION Job; closed ExecutionStep→ProviderOutcome mapping; explicit uncertain-side-effect recovery; trusted IndexCore Hint boundary; canonical READY only through the accepted Q5/Projector/Copy path; fail-closed terminal/inconsistent states; real PostgreSQL multi-claim restart evidence; and Gate 0–3.10 regressions.
 
-Do not authorize Gate 3.11 until Gate 3.10 is accepted and merged.
+Do not authorize Gate 3.12 until Gate 3.11 is accepted and merged.
 
 
 ## Current bounded task
 
 ### Gate 3.10 — Canonical confirmation, projected Copy, and READY finalization
 
-Status: **AUTHORIZED / IN PROGRESS**
+Status: **ACCEPTED**
 
-Tracking: GitHub Issue #44
+Tracking: GitHub Issue #44 / PR #45
+
+Merged:
+- reviewed head `2f8f862eb17ffd1ea5238cba292873e77662c276`;
+- squash commit `d211323e7dc30922d9796f57fad611f44b825fe2`.
+
+Acceptance evidence:
+- exact IndexCore Q5 candidate + ambiguity fail closed;
+- existing Q8 Journal Projector owns Copy creation/availability, one bounded page per invocation;
+- exact PRESENT Copy by canonical root/resource/binding;
+- optional monotonic Variant binding joins the same PostgreSQL DB-time lease-fenced finalization transaction;
+- locked Manifest/Job/Copy cross-check prevents replay-only plans from advancing fresh READY and prevents mismatched Binding/Variant;
+- immutable result_copy_id + Manifest READY + same Job SUCCEEDED commit atomically;
+- READY exact replay independent of later Binding state, no external calls;
+- schema v12, nullable result_copy_id, no default/backfill, historical upgrade-compatible;
+- Architect Round 3 ACCEPTED (review `5364884446`);
+- exact-head CI `36701499525` all three groups SUCCESS.
 
 Scope:
 - build exact canonical candidate path from target_path + result_name;
@@ -852,3 +868,28 @@ Explicitly deferred:
 - auth/quota/share/access;
 - Agent;
 - public API/UI.
+
+
+## Current bounded task
+
+### Gate 3.11 — One-claim acquisition stage dispatcher and controlled end-to-end orchestration
+
+Status: **AUTHORIZED / IN PROGRESS**
+
+Tracking: GitHub Issue #46
+
+Governing decision: D-034.
+
+Scope:
+- one already-claimed ACQUISITION Job + current claim generation;
+- choose exactly one step from persisted Manifest: ACTIVE provider/outcome, AWAITING_VISIBILITY Hint, AWAITING_CANONICAL canonical confirmation;
+- retain existing DB-time-fenced stores, START_RESERVED provider side-effect boundary, IndexCore-owned OpenList observation, D-017 Projector ownership, D-033 READY rules;
+- no same-claim chaining to the next stage;
+- explicit terminal/recovery and inconsistent-state fail-closed results;
+- controlled PostgreSQL multi-claim/restart tests prove the same Job progresses across the stages without duplicate StartDownload or failure-budget consumption;
+- no new schema migration planned.
+
+Explicitly deferred:
+- automatic ClaimNext loop / worker daemon / process deployment;
+- Source Resolver normalization, auth/quota/share/access;
+- public API/UI, Agent and Search-dependent behavior.
