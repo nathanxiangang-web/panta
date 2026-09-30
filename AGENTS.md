@@ -127,6 +127,17 @@ terminal pair       -> committed no-op / replay
 - Normal pending status does not consume failure budget.
 - Do not implement a continuous worker daemon / automatic ClaimNext scheduler yet.
 
+## Type-scoped claim and linked recovery
+
+Active Gate 3.12: Issue #48 / D-035.
+
+- A future acquisition worker must only claim ACQUISITION Jobs using a database-atomic type filter. Never claim arbitrary Jobs and then discard mismatched types.
+- Expired RUNNING ACQUISITION Jobs require a PostgreSQL-time-fenced atomic transition of both linked Manifest and Job to RECOVERY_REQUIRED.
+- Lock Manifest before Job, recheck exact idempotency/payload/reverse link under lock.
+- Generic Job-only expired-lease sweep must not mutate ACQUISITION Jobs independently.
+- Do not drop START_RESERVED / task references or automatically repeat 115 StartDownload.
+- Maintain ClaimAttempts generation and FailureCount semantics, no worker daemon or process runtime in Gate 3.12.
+
 ## Job safety
 
 - `claim_attempts` = monotonic claim-generation fence.
