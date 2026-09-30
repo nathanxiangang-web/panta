@@ -72,12 +72,14 @@ Panta Catalog Projector
 ```
 
 Rules:
-- OpenList is the storage observation/access layer.
+- OpenList is the upstream storage observation/access layer used by IndexCore.
 - IndexCore is the canonical physical-resource truth.
 - Panta never redefines physical presence independently of IndexCore.
-- Panta must not read/write IndexCore PostgreSQL directly.
-- Product-facing services consume IndexCore read APIs / Journal.
-- Trusted mutation hints remain an internal integration path.
+- Panta does not directly query OpenList to decide acquisition visibility or canonical presence.
+- Panta must not read OpenList DB or read/write IndexCore PostgreSQL directly.
+- Product-facing physical-resource services consume IndexCore read APIs / Journal.
+- After provider mutations, Panta may send a trusted IndexCore Mutation Hint; IndexCore owns the subsequent OpenList scoped verification.
+- Trusted Mutation Hint acceptance is work ingress only, not canonical truth.
 
 ## 5. Control plane
 
@@ -117,20 +119,25 @@ Acquisition Job
   ↓
 115 cloud download completes
   ↓
-verify storage result
+provider stage commits AWAITING_VISIBILITY
   ↓
-verify/refresh OpenList visibility
+Panta sends trusted IndexCore Mutation Hint
+  root_id   = StorageBinding.indexcore_root_id
+  scope_key = Manifest.target_path
+  reason    = POSSIBLE_CHANGE
   ↓
-IndexSync mutation hint
+IndexCore-owned incremental runtime
   ↓
-IndexCore scoped refresh
+IndexCore OpenList scoped verification
   ↓
-IndexCore canonical confirmation / Journal
+IndexCore Canonical + Journal
   ↓
-Catalog Projector creates or updates Copy
+Panta Query/Journal confirmation + Catalog Projector
   ↓
 READY
 ```
+
+Panta does **not** add a separate direct OpenList visibility-verification hop. OpenList remains inside the IndexCore-owned observation pipeline.
 
 No full 40 TB rescan is required for a normal acquisition.
 
@@ -202,3 +209,38 @@ Pricing is explicitly out of scope for the first implementation gates.
 8. Agent output never becomes canonical truth without deterministic validation/evidence.
 9. Provider-specific names/types must not leak into core domain interfaces.
 10. Git is the project memory; accepted decisions and state changes must be committed.
+11. Panta acquisition does not directly observe OpenList; IndexCore owns OpenList collection/scoped verification.
+12. If an old document, issue, PR, or chat memory conflicts with a newer accepted decision, the newer accepted Git decision wins.
+13. Before a new Gate is planned or reviewed, read `docs/AI-ARCHITECTURE-MEMORY.md`, `PROJECT-STATE.md`, and the newest relevant decisions.
+
+
+## 13. AI / Architect reconstruction rule
+
+To prevent context drift in long AI-assisted development sessions, project truth must be reconstructed from Git before every new Gate or architecture review.
+
+Read order:
+
+```text
+docs/AI-ARCHITECTURE-MEMORY.md
+        ↓
+PROJECT-STATE.md
+        ↓
+docs/DECISIONS.md
+        ↓
+PROJECT-CONTEXT.md
+        ↓
+docs/MVP-BLUEPRINT.md
+        ↓
+current Issue / PR
+        ↓
+exact code + tests + CI
+```
+
+Chat history is never authoritative when it conflicts with current Git.
+
+The compact memory file must be updated whenever:
+- an architecture boundary changes;
+- a previous decision is superseded;
+- a Gate changes the runtime/state model;
+- an external integration contract changes materially;
+- an AI review uncovers context drift or duplicated responsibility.
