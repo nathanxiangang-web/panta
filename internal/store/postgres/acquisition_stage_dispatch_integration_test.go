@@ -9,8 +9,44 @@ import (
 	"github.com/nathanxiangang-web/panta/internal/acquisition"
 	"github.com/nathanxiangang-web/panta/internal/catalog"
 	"github.com/nathanxiangang-web/panta/internal/jobs"
+	"github.com/nathanxiangang-web/panta/internal/providers/contracts"
 	"github.com/nathanxiangang-web/panta/internal/storage"
 )
+
+type gate311StartFailureDownloader struct {
+	startCalls  int
+	statusCalls int
+	reference   contracts.TaskReference
+	err         error
+}
+
+func (provider *gate311StartFailureDownloader) Descriptor() contracts.Descriptor {
+	return contracts.Descriptor{ID: "test", DisplayName: "test downloader",
+		Capabilities: contracts.CapabilitySet{Downloader: true}}
+}
+
+func (provider *gate311StartFailureDownloader) StartDownload(context.Context, contracts.DownloadRequest) (contracts.TaskReference, error) {
+	provider.startCalls++
+	return provider.reference, provider.err
+}
+
+func (provider *gate311StartFailureDownloader) DownloadStatus(context.Context, contracts.TaskReference) (contracts.TaskStatus, error) {
+	provider.statusCalls++
+	return contracts.TaskStatus{}, errors.New("unexpected provider poll")
+}
+
+func (provider *gate311StartFailureDownloader) CancelDownload(context.Context, contracts.TaskReference) error {
+	return errors.New("unexpected provider cancel")
+}
+
+type gate311ExecutionSession struct{ downloader contracts.DownloaderProvider }
+
+func (session gate311ExecutionSession) ResolveDownloader(_ context.Context, request acquisition.DownloaderSessionRequest) (contracts.DownloaderBinding, error) {
+	if request.ProviderID != "test" || request.ConnectionID == "" || request.CredentialRef != nil {
+		return contracts.DownloaderBinding{}, errors.New("unexpected downloader session identity")
+	}
+	return contracts.DownloaderBinding{Descriptor: session.downloader.Descriptor(), Downloader: session.downloader}, nil
+}
 
 type gate311Provider struct {
 	calls  int
@@ -278,5 +314,95 @@ func TestPostgresAcquisitionStageDispatcherUncertainSideEffectRequiresRecovery(t
 	if provider.calls != 1 || visibility.calls != 0 || canonical.calls != 0 {
 		t.Fatalf("recovery replay called stages provider/visibility/canonical = %d/%d/%d",
 			provider.calls, visibility.calls, canonical.calls)
+	}
+}
+
+func TestPostgresAcquisitionStageDispatcherRealExecutionStartFailure(t *testing.T) {
+	for _, test := range []struct {
+		name               string
+		suffix             string
+		startErr           error
+		wantReferenceError bool
+	}{
+		{name: "lost response", suffix: "42", startErr: errors.New("provider response lost")},
+		{name: "invalid reference", suffix: "43", wantReferenceError: true},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			fixture := newCanonicalPgFixture(t)
+			ctx := fixture.ctx
+			if _, err := fixture.pool.Exec(ctx, `UPDATE storage_bindings SET provider_scope = 'test-scope' WHERE storage_binding_id = $1`, string(fixture.bindingID)); err != nil {
+				t.Fatalf("set provider scope: %v", err)
+			}
+			seeded := seedCanonicalPgManifestJob(t, ctx, fixture.pool, fixture.bindingID, test.suffix,
+				acquisition.StateActive, "worker-provider", 1, 0, 5, canonicalPgLeaseEnd(), nil)
+			jobStore := mustGate311JobStore(t, fixture)
+			storageStore, err := NewStorageRepository(fixture.pool)
+			if err != nil {
+				t.Fatal(err)
+			}
+			inputs, err := acquisition.NewExecutionInputResolver(fixture.manifests, storageStore)
+			if err != nil {
+				t.Fatal(err)
+			}
+			providerTasks, err := NewAcquisitionProviderTaskRepository(fixture.pool)
+			if err != nil {
+				t.Fatal(err)
+			}
+			downloader := &gate311StartFailureDownloader{err: test.startErr}
+			execution, err := acquisition.NewExecutionStepService(inputs, fixture.manifests, jobStore,
+				gate311ExecutionSession{downloader: downloader}, providerTasks)
+			if err != nil {
+				t.Fatal(err)
+			}
+			outcomeStore, err := NewProviderOutcomeRepository(fixture.pool)
+			if err != nil {
+				t.Fatal(err)
+			}
+			outcomes, err := acquisition.NewProviderOutcomeService(outcomeStore)
+			if err != nil {
+				t.Fatal(err)
+			}
+			visibility := &gate311UnexpectedVisibility{}
+			canonical := &gate311UnexpectedCanonical{}
+			dispatcher, err := acquisition.NewStageDispatcher(jobStore, fixture.manifests,
+				execution, outcomes, visibility, canonical)
+			if err != nil {
+				t.Fatal(err)
+			}
+			request := acquisition.StageDispatchRequest{JobID: seeded.jobID, Owner: seeded.owner,
+				ExpectedClaim: seeded.claim, Now: canonicalPgNow(), RetryAt: canonicalPgNow().Add(time.Minute)}
+
+			// The first real Execute must classify the post-reservation error before
+			// the dispatcher commits a durable recovery outcome in PostgreSQL.
+			result, err := dispatcher.Dispatch(ctx, request)
+			if err != nil || result.Stage != acquisition.StageProvider || !result.Terminal ||
+				result.Manifest.State != acquisition.StateRecoveryRequired || result.Job.State != jobs.StateRecoveryRequired {
+				t.Fatalf("first dispatch = %#v, %v; want immediate recovery", result, err)
+			}
+			stored, err := providerTasks.GetProviderTask(ctx, seeded.manifestID)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if stored.State != acquisition.ProviderTaskStartReserved || stored.ProviderTaskRef != "" {
+				t.Fatalf("provider task = %#v, want uncommitted START_RESERVED", stored)
+			}
+			manifest := readCanonicalPgManifest(t, ctx, fixture.pool, seeded.manifestID)
+			job := readCanonicalPgJob(t, ctx, fixture.pool, seeded.jobID)
+			if manifest.State != acquisition.StateRecoveryRequired || job.State != jobs.StateRecoveryRequired || job.FailureCount != 0 {
+				t.Fatalf("durable state = Manifest %s, Job %s, failures %d", manifest.State, job.State, job.FailureCount)
+			}
+			if downloader.startCalls != 1 || downloader.statusCalls != 0 {
+				t.Fatalf("provider calls start/status = %d/%d", downloader.startCalls, downloader.statusCalls)
+			}
+
+			replayed, err := dispatcher.Dispatch(ctx, request)
+			if err != nil || replayed.Stage != acquisition.StageRecovery || replayed.Changed || !replayed.Terminal {
+				t.Fatalf("recovery replay = %#v, %v", replayed, err)
+			}
+			if downloader.startCalls != 1 || downloader.statusCalls != 0 || visibility.calls != 0 || canonical.calls != 0 {
+				t.Fatalf("replay called external stages: start/status/visibility/canonical = %d/%d/%d/%d",
+					downloader.startCalls, downloader.statusCalls, visibility.calls, canonical.calls)
+			}
+		})
 	}
 }

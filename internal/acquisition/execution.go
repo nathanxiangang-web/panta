@@ -330,10 +330,14 @@ func (service *ExecutionStepService) claimAndStartProviderTask(
 
 	reference, startErr := downloader.StartDownload(ctx, input.Download)
 	if startErr != nil {
-		return StepResult{}, fmt.Errorf("provider %s StartDownload: %w", input.ProviderID, startErr)
+		// START_RESERVED is durable, but the provider may have created a task
+		// before its response failed. Preserve the cause while requiring recovery.
+		return StepResult{}, fmt.Errorf("%w: provider %s StartDownload: %w",
+			ErrExecutionSideEffectUncertain, input.ProviderID, startErr)
 	}
 	if !ValidProviderTaskRef(reference.Value) {
-		return StepResult{}, fmt.Errorf("%w: provider %s", ErrProviderTaskReference, input.ProviderID)
+		return StepResult{}, fmt.Errorf("%w: %w: provider %s",
+			ErrExecutionSideEffectUncertain, ErrProviderTaskReference, input.ProviderID)
 	}
 
 	commit, commitErr := service.tasks.ClaimProviderTask(ctx, ProviderTaskClaimRequest{
