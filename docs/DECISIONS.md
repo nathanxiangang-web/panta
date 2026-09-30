@@ -958,3 +958,19 @@ Rules:
 - controlled PostgreSQL + HTTP-fake integration is mandatory and may run in CI. No live 115 account access or production deployment is authorized without a later separate decision.
 
 Scope is bounded to process/runtime composition and controlled evidence; not Source Resolver, API/UI, real account secrets provisioning, deployment images or distributed scheduling.
+
+## D-039 — Operator-protected credentials, read-only preflight and explicit worker start
+
+**Status:** Accepted
+
+Gate 3.15 accepted an internally complete, fail-closed acquisition runtime graph and controlled E2E. The stock CLI must not silently enter this graph; Gate 3.16 introduces an **operator-driven** bootstrap contract.
+
+- Default process startup stays side-effect-free; `preflight` and `start` are distinct explicit operator actions.
+- Preflight must only inspect schema v12, trusted configuration/session identity and externally protected secret availability. It must never claim, migrate, start a provider task or submit Hint.
+- Worker startup must reuse the one D-038 Runtime graph and D-037 serial lifecycle, with injected credentials from a restricted external SecretResolver and no command-line raw cookies or tokens.
+- Malformed/missing/wrong-permission secrets, duplicate or mismatched bindings, unsafe Hint trust, missing schema and uncovered ACTIVE acquisition sessions are fail-closed startup conditions.
+- Do not log or persist plaintext credentials, provider source URLs or secret bearer tokens. Secret backend and injected transports are composition-edge responsibilities.
+- SIGINT/SIGTERM stops scheduling, propagates cancellation, joins Run, then closes owned Panta DB resources. Fatal recovery debt remains an operator-visible error.
+- No live 115 account action, production deployment, API/UI, new queue, direct OpenList acquisition check or schema migration is authorized in this Gate.
+
+Gate 3.16 evidence requires protected-secret/preflight safety tests and controlled PostgreSQL+local HTTP integration. Real 115 credentials and production deployment remain separately gated.
