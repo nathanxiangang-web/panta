@@ -76,6 +76,10 @@ type Options struct {
 	Now func() time.Time
 	// MaxPages bounds status pagination. Zero uses DefaultMaxPages.
 	MaxPages int
+	// HTTPTimeout bounds each pinned-driver request when a cookie-backed
+	// adapter is constructed. Zero uses a safe default; it does not affect
+	// injected Backend tests.
+	HTTPTimeout time.Duration
 }
 
 // Adapter is the concrete 115 DownloaderProvider.

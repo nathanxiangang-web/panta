@@ -62,6 +62,8 @@ jobs:
           cache-dependency-path: go.sum
       - name: PostgreSQL integration tests
         run: go test ./internal/store/postgres -run 'Test(Postgres|GateZero)' -count=1 -v
+      - name: Gate 3.15 controlled runtime integration
+        run: go test ./test/e2e/acquisitionruntime -run TestPostgresAcquisitionRuntime -count=1 -v
       - name: Apply migrations
         run: go run ./cmd/panta-db migrate
       - name: Validate migration status

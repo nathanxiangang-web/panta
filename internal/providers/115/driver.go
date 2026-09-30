@@ -4,7 +4,9 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"net/http"
 	"sync"
+	"time"
 
 	"github.com/SheltonZhu/115driver/pkg/driver"
 )
@@ -131,11 +133,18 @@ func parseCredential(cookie []byte) (*driver.Credential, error) {
 // guarantee of network isolation; tests drive the adapter through an injected
 // Backend instead.
 func NewAdapterFromCookie(cookie []byte, options Options) (*Adapter, error) {
+	timeout := options.HTTPTimeout
+	if timeout == 0 {
+		timeout = 5 * time.Second
+	}
+	if timeout < time.Second || timeout > 10*time.Second {
+		return nil, fmt.Errorf("%w: 115 HTTP timeout outside supported bound", ErrInvalidDownloadRequest)
+	}
 	credential, err := parseCredential(cookie)
 	if err != nil {
 		return nil, err
 	}
-	client := driver.Default().ImportCredential(credential)
+	client := driver.Default().SetHttpClient(&http.Client{Timeout: timeout}).ImportCredential(credential)
 	// Drop this package's only reference to the secret material. The imported
 	// client owns its own cookies from here on.
 	forgetCredential(credential)
