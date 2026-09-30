@@ -3,8 +3,8 @@
 > Canonical short-form project memory for Architect/AI sessions.
 >
 > Last architecture-memory synchronization: **2026-09-30**
-> Active Gate: **3.9 / Issue #42 — Durable acquisition result locator before canonical confirmation**
-> Governing corrections: **D-029** (IndexCore-owned observation), **D-030** (Git-first AI reconstruction), and **D-032** (separate durable result_name locator).
+> Active Gate: **3.10 / Issue #44 — Canonical confirmation, projected Copy, and READY finalization**
+> Governing corrections: **D-029** (IndexCore-owned observation), **D-030** (Git-first AI reconstruction), **D-032** (durable result_name locator), and **D-033** (READY anchored to one canonical projected Copy).
 >
 > **Read this file before planning, reviewing, or authorizing any new Gate.**
 >
@@ -195,6 +195,31 @@ Semantics:
 
 Gate 3.10 may later use the frozen locator for exact canonical confirmation.
 
+## 5.2 Canonical READY anchor
+
+Gate 3.10 finalizes one acquisition only after the pre-canonical locator has been resolved through IndexCore and the existing Journal Projector:
+
+```text
+indexcore_root_id + target_path + result_name
+        ↓ Q5
+one PRESENT IndexCore resource
+        ↓ Q8 Journal / existing Projector
+one PRESENT Panta Copy
+        ↓ optional monotonic Variant bind
+Manifest.result_copy_id = Copy.ID
+Manifest READY
+Job SUCCEEDED
+```
+
+Rules:
+- zero Q5 matches is pending, not failure;
+- Q5 ambiguity/multiple matches is recovery, never guesswork;
+- acquisition never creates/upserts Copy directly;
+- one invocation may advance the existing projector by at most one bounded page;
+- unresolved Copy is sufficient when the Manifest has no Variant intent;
+- if VariantID is present, the exact Copy must be bound to that Variant before READY;
+- result_copy_id is the stable historical acquisition result link.
+
 ## 6. Job Engine invariants
 
 The ACQUISITION Job is the durable execution safety boundary.
@@ -314,13 +339,15 @@ Accepted:
 - Gate 3.6 — concrete 115 Downloader
 - Gate 3.7 — atomic provider-stage outcome handoff
 - Gate 3.8 — IndexCore trusted Mutation Hint and observation handoff
+- Gate 3.9 — durable acquisition result locator
 
 Authorized now:
-- **Gate 3.9 — Issue #42 — Durable acquisition result locator before canonical confirmation**
+- **Gate 3.10 — Issue #44 — Canonical confirmation, projected Copy, and READY finalization**
 
 Not authorized yet:
 - direct Panta OpenList acquisition verifier;
-- Q5/Journal canonical confirmation and READY beyond current Gate;
+- direct acquisition Copy creation/upsert;
+- Gate 3.11+ work beyond current canonical finalization;
 - API/UI;
 - auth/quota/share;
 - Agent implementation;
