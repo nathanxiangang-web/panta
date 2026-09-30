@@ -6,7 +6,7 @@
 
 **MVP implementation — Gate 3**
 
-Gate 0, Gate 1, and Gate 2 are formally accepted and closed. Gate 3.1 through Gate 3.6 are accepted and merged. Gate 3.7 is authorized and in progress.
+Gate 0, Gate 1, and Gate 2 are formally accepted and closed. Gate 3.1 through Gate 3.7 are accepted and merged. Gate 3.8 is authorized and in progress.
 
 ## Accepted baseline
 
@@ -654,19 +654,33 @@ Explicitly deferred:
 
 ### Gate 3.7 — Atomic provider-stage outcome handoff to Manifest + Job
 
-Status: **AUTHORIZED / IN PROGRESS**
+Status: **ACCEPTED**
 
-Tracking: GitHub Issue #35
+Tracking: GitHub Issue #35 / PR #36
+
+Merged:
+- squash commit `19121d5b3312cad9ee97155fe5204556a662c89d`
+
+Acceptance evidence:
+- provider-stage outcome commits Manifest + linked Job in one PostgreSQL transaction;
+- PROVIDER_IN_PROGRESS -> ACTIVE + RETRY_WAIT;
+- PROVIDER_SUCCEEDED -> AWAITING_VISIBILITY + RETRY_WAIT on the same ACQUISITION Job;
+- provider failure/cancel/recovery mappings are atomic and replay-safe;
+- provider success never marks Job SUCCEEDED or Manifest READY;
+- exact replay returns Changed=false, including PROVIDER_IN_PROGRESS;
+- claim generation and failure retry budget are separate;
+- repeated stage polling does not consume failure budget;
+- stale claim generations remain fenced;
+- v9 -> v10 migration preserves legacy claim generation and resets the new failure counter;
+- GitHub Actions run `36657549476` fully green;
+- migration history compatible at version 10.
 
 Scope:
-- atomically persist provider-stage outcome across linked Manifest + Job;
-- keep provider in-progress as ACTIVE + RETRY_WAIT;
-- provider success becomes AWAITING_VISIBILITY + RETRY_WAIT;
-- provider failure/cancel becomes matching Manifest + Job terminal state;
-- uncertain side effect becomes Manifest + Job RECOVERY_REQUIRED;
-- same ACQUISITION Job continues into visibility/canonical stages;
-- owner/attempt/database-time lease fencing;
-- replay-safe exact outcome and fail-closed conflicting outcome.
+- atomic provider-stage Manifest + Job outcome persistence;
+- database-time lease fencing;
+- idempotent exact replay and fail-closed conflicting replay;
+- one ACQUISITION Job spans provider and later visibility/canonical stages;
+- claim generation separated from bounded failure retry budget.
 
 Explicitly deferred:
 - worker/claim loop;
@@ -675,6 +689,33 @@ Explicitly deferred:
 - OpenList visibility verifier;
 - Mutation Hint / scoped refresh;
 - AWAITING_CANONICAL / READY;
+- API/UI.
+
+## Current bounded task
+
+### Gate 3.8 — OpenList known-path visibility verifier
+
+Status: **AUTHORIZED / IN PROGRESS**
+
+Tracking: GitHub Issue #37
+
+Scope:
+- implement a real OpenList HTTP VisibilityPort using exact known-path `POST /api/fs/get`;
+- preserve configured base-path prefixes and optional Authorization header;
+- distinguish exact object-not-found from authorization/storage/provider/integration failure;
+- derive OpenList path only from StorageBinding.openlist_mount_path + Manifest.target_path;
+- require AWAITING_VISIBILITY Manifest + ACTIVE StorageBinding;
+- return VISIBLE / NOT_VISIBLE observation without mutating Manifest or Job;
+- no list/search/walk and no provider/IndexCore calls.
+
+Explicitly deferred:
+- visibility-stage Job outcome commit;
+- polling cadence;
+- IndexCore Mutation Hint / scoped refresh;
+- AWAITING_CANONICAL transition;
+- Journal/canonical confirmation;
+- READY;
+- OpenList access/302;
 - API/UI.
 
 ## Planned Gate 0 task sequence
@@ -719,6 +760,6 @@ Until the relevant gate is accepted, do not implement:
 
 ## Next architect action
 
-Review the Gate 3.7 PR for Issue #35 against atomic Manifest+Job outcome persistence, provider-success handoff to AWAITING_VISIBILITY + RETRY_WAIT, lease fencing, replay/concurrency safety, recovery-required semantics, and full Gate 1/2/3.1-3.6 regression.
+Review the Gate 3.8 PR for Issue #37 against exact OpenList known-path HTTP semantics, D-028 mount+target mapping, strict not-found/error separation, AWAITING_VISIBILITY-only verification, integration isolation, and full Gate 1/2/3.1-3.7 regression.
 
-Do not authorize Gate 3.8 until Gate 3.7 is accepted.
+Do not authorize Gate 3.9 until Gate 3.8 is accepted.
