@@ -481,3 +481,71 @@ Rules:
 - RECOVERY_REQUIRED remains non-terminal and is not normally claimable.
 
 This prevents provider-stage completion from leaving product milestone and control-plane execution state out of sync.
+
+
+## D-027 — Claim generation and failure retry budget are separate Job counters
+
+**Status:** Accepted
+
+D-014 remains correct that active Job leases require a monotonically increasing claim generation plus database-time lease validity. Gate 3.7 refines how that generation is stored.
+
+The two concerns are now explicitly separate:
+
+```text
+claim_attempts
+    monotonically increasing claim generation
+    incremented on every successful ClaimNext
+    unbounded
+    used as the stale-worker fencing token
+
+attempt_count
+    failure retry count (Go: jobs.Job.FailureCount)
+    incremented only by RetryAt
+    bounded by max_attempts
+```
+
+Consequences:
+- normal provider polling, visibility polling, and later workflow-stage rescheduling do not consume failure retry budget;
+- RetryAt is the only generic Job Engine operation that consumes the failure budget;
+- a newer claim generation fences every older worker even when the owner string is reused;
+- provider success may return the same ACQUISITION Job to RETRY_WAIT without risking exhaustion of the failure budget;
+- RECOVERY_REQUIRED remains outside ordinary ClaimNext.
+
+Migration `0010_job_claim_generation.sql` preserves upgrade-time fencing by moving the pre-v10 `attempt_count` value into `claim_attempts` and resetting the new failure counter to zero:
+
+```sql
+UPDATE jobs
+SET claim_attempts = attempt_count,
+    attempt_count = 0;
+```
+
+This supersedes only D-014's implementation note that the old `attempt_count` column itself was the claim-generation token. D-014's fencing principle remains unchanged.
+
+
+## D-028 — Manifest target_path is binding-relative for OpenList observation
+
+**Status:** Accepted
+
+For acquisition visibility checks, OpenList addressing is derived only from the configured OpenList mount and the Manifest's normalized target path:
+
+```text
+OpenList request path
+    = Join(StorageBinding.openlist_mount_path, Manifest.target_path)
+```
+
+Rules:
+- `openlist_mount_path` is the OpenList mount coordinate;
+- `Manifest.target_path` is the path inside that binding's observed namespace;
+- provider_scope is never used to derive the OpenList path;
+- IndexCore root identity is never used to derive the OpenList path;
+- provider_scope is never derived from the OpenList path;
+- the joined path must stay absolute, normalized, and beneath/equal to the configured mount.
+
+Examples:
+
+```text
+mount "/"    + target "/downloads/item" -> "/downloads/item"
+mount "/115" + target "/downloads/item" -> "/115/downloads/item"
+```
+
+This preserves D-022/D-025's separation between provider target coordinates, OpenList observation coordinates, and IndexCore canonical root identity.
