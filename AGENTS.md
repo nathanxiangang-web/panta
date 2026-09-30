@@ -174,6 +174,17 @@ Active Gate 3.15 / Issue #54 / D-038.
 - No new acquisition Copy writer; Q8 Projector owns Copy and D-033 canonical transaction owns READY.
 - Controlled PostgreSQL + HTTP fake E2E is authorized, live 115 account acceptance / deployment remains a later Gate.
 
+## Protected operator bootstrap and preflight
+
+Current Gate 3.16 / Issue #56 / D-039.
+
+- Default `cmd/panta` mode must not resolve provider secrets, claim jobs, submit Hint, or make provider requests.
+- Provide distinct explicit read-only preflight and opt-in worker start using one accepted D-038 runtime graph.
+- Inject raw 115 cookies and trusted Hint tokens only via externally protected secret sources with strict file/path permission checks; never put secrets into CLI arguments, Git, logs, Panta tables or error messages.
+- Preflight must be verifiably read-only: schema v12/active session identities/config and secret availability, no DB migration, no ClaimNext, no external provider mutation.
+- Explicit start must fully validate all required exact sessions before claims, preserve one D-037 serial Worker, signal-based cancellation and owned pool Close-after-Run ordering.
+- Live 115 account downloads, production deployment, public API/UI and additional schedulers are not authorized in this Gate.
+
 ## Job safety
 
 - `claim_attempts` = monotonic claim-generation fence.
