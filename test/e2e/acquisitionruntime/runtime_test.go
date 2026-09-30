@@ -373,6 +373,19 @@ func TestPostgresAcquisitionRuntimeRealProtocolE2E(t *testing.T) {
 		stages[1] != acquisition.StageVisibility || stages[2] != acquisition.StageCanonical {
 		t.Fatalf("stages=%v", stages)
 	}
+	application.Close()
+	application.Close()
+	if err := fixture.pool.Ping(fixture.ctx); err != nil {
+		t.Fatalf("runtime closed caller-owned pool: %v", err)
+	}
+	response, err := read.Client().Get(read.URL + "/v1/roots/canonical-root/resolve?path=%2Fdownloads%2Fitem%2Fmovie.mkv")
+	if err != nil {
+		t.Fatalf("runtime closed caller-owned HTTP server: %v", err)
+	}
+	response.Body.Close()
+	if response.StatusCode != http.StatusOK {
+		t.Fatalf("caller-owned HTTP server status = %d", response.StatusCode)
+	}
 }
 
 func TestPostgresAcquisitionRuntimeCanceledStartRecoversWithoutRestart(t *testing.T) {
