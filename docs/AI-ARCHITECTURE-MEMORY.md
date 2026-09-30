@@ -3,8 +3,8 @@
 > Canonical short-form project memory for Architect/AI sessions.
 >
 > Last architecture-memory synchronization: **2026-09-30**
-> Active Gate: **3.14 / Issue #52 — Opt-in serial acquisition worker lifecycle and bounded scheduling**
-> Governing corrections: **D-029** (IndexCore-owned observation), **D-030** (Git-first AI reconstruction), **D-032** (durable result_name locator), **D-033** (READY anchored to one canonical projected Copy), **D-034** (one-claim stage routing), **D-035** (type-scoped claiming and atomic recovery), **D-036** (one explicit runner tick), and **D-037** (opt-in worker lifecycle).
+> Active Gate: **3.15 / Issue #54 — Fail-closed runtime composition and controlled real-protocol acquisition E2E**
+> Governing corrections: **D-029** (IndexCore-owned observation), **D-030** (Git-first AI reconstruction), **D-032** (durable result_name locator), **D-033** (READY anchored to one canonical projected Copy), **D-034** (one-claim stage routing), **D-035** (type-scoped claiming and atomic recovery), **D-036** (one explicit runner tick), **D-037** (opt-in worker lifecycle), and **D-038** (fail-closed runtime graph and secret/trust boundaries).
 >
 > **Read this file before planning, reviewing, or authorizing any new Gate.**
 >
@@ -278,6 +278,14 @@ IDLE/RECOVERY_ONLY/STAGE_COMPLETE are normal; errors must not bypass stage store
 
 Do not claim enabled production service until real PostgreSQL, IndexCore and 115 authenticated runtime composition is complete in a separately accepted Gate. A process enabled without dependencies must fail closed; default process remains side-effect-free.
 
+## 5.7 Runtime composition boundary
+
+D-038 / Gate 3.15 may compose one accepted runtime graph of Panta PostgreSQL stores, IndexCore Q5/Q8 read client plus distinct trusted Hint port, exact provider-session registry, D-017 Journal Projector, D-036 RunOnce and D-037 serial Worker.
+
+Require validated schema v12, complete mandatory clients, injected secrets and exact ProviderID/ConnectionID/CredentialRef match *before* enabling worker; no fallback to mocked integrations. The main Panta DB is never IndexCore's DB. Hint acceptance never implies READY; only D-033 canonical Copy confirmation may finalize.
+
+Default disabled process must remain side-effect-free. Controlled PostgreSQL+HTTP-fake E2E is in scope; real 115 account secrets and live deployment are not yet authorized. No direct Panta OpenList verification, Job Engine duplication, or new schema is allowed.
+
 ## 6. Job Engine invariants
 
 The ACQUISITION Job is the durable execution safety boundary.
@@ -402,14 +410,15 @@ Accepted:
 - Gate 3.11 — one-claim acquisition stage dispatcher and controlled E2E
 - Gate 3.12 — acquisition-only claims and atomic expired-lease recovery
 - Gate 3.13 — bounded one-shot acquisition RunOnce
+- Gate 3.14 — opt-in serial acquisition worker lifecycle
 
 Authorized now:
-- **Gate 3.14 — Issue #52 — Opt-in serial acquisition worker lifecycle and bounded scheduling**
+- **Gate 3.15 — Issue #54 — Fail-closed runtime composition and controlled real-protocol acquisition E2E**
 
 Not authorized yet:
 - direct Panta OpenList acquisition verifier;
 - direct acquisition Copy creation/upsert;
-- production provider/IndexCore credentials, deployment and Gate 3.15+ work beyond the opt-in worker lifecycle;
+- real 115 account acceptance, production deployment, public API/UI, and Gate 3.16+ work beyond controlled runtime composition;
 - API/UI;
 - auth/quota/share;
 - Agent implementation;
