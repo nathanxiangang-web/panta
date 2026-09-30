@@ -697,9 +697,23 @@ Explicitly deferred:
 
 ### Gate 3.8 — IndexCore trusted Mutation Hint and observation handoff
 
-Status: **AUTHORIZED / IN PROGRESS**
+Status: **ACCEPTED**
 
-Tracking: GitHub Issue #39
+Tracking: GitHub Issue #39 / PR #40
+
+Merged:
+- squash commit `9de14ab89ce3f7822fae927d68e09711adc24eb7`
+
+Acceptance evidence:
+- production `internal/app.HintPort` composes the real IndexCore Hint client into the acquisition-owned port;
+- Hint transport remains literal-loopback-only and never follows redirects;
+- exact D-029 root/scope/reason mapping;
+- no production Panta -> OpenList acquisition verification path;
+- 202 Accepted remains non-canonical and never READY;
+- accepted Hint atomically commits AWAITING_CANONICAL + RETRY_WAIT on the same Job;
+- at-least-once Hint resend is safe before Panta commit and stops after durable handoff;
+- GitHub Actions run `36665857635` fully green;
+- no migration change; schema remains version 10.
 
 Correction:
 - Issue #37 was closed NOT PLANNED because direct Panta -> OpenList acquisition verification violates D-018/D-015.
@@ -722,6 +736,32 @@ Explicitly deferred:
 - Copy/Projector completion orchestration;
 - READY transition;
 - acquisition worker loop;
+- public API/UI.
+
+## Current bounded task
+
+### Gate 3.9 — Deterministic acquired-result identity capture
+
+Status: **AUTHORIZED / IN PROGRESS**
+
+Tracking: GitHub Issue #41
+
+Scope:
+- freeze target_path as the refreshed directory scope and expected_name as its exact direct child;
+- expose provider-neutral optional download result name;
+- map successful 115 OfflineTask.Name only, never FileId/DirId;
+- carry provider result identity through ExecutionStep;
+- atomically freeze expected_name with PROVIDER_SUCCEEDED -> AWAITING_VISIBILITY + RETRY_WAIT;
+- fail closed on missing or conflicting result identity;
+- harden expected_name persistence as a direct-child segment;
+- require a valid expected_name before Gate 3.8 may submit a fresh Mutation Hint.
+
+Explicitly deferred:
+- Q5/Journal canonical confirmation;
+- Copy/Projector completion orchestration;
+- READY transition;
+- acquisition worker loop;
+- Source Resolver normalization;
 - public API/UI.
 
 ## Planned Gate 0 task sequence
@@ -766,6 +806,6 @@ Until the relevant gate is accepted, do not implement:
 
 ## Next architect action
 
-Review the Gate 3.8 PR for Issue #39 against the real IndexCore trusted Hint transport, D-029 root/scope mapping, loopback/Bearer trust preservation, AWAITING_VISIBILITY -> AWAITING_CANONICAL atomic handoff, at-least-once Hint replay safety, and full Gate 1/2/3.1-3.7 regression.
+Review the Gate 3.9 PR for Issue #41 against D-031 direct-child identity semantics, provider-neutral result-name propagation, atomic expected_name freeze on provider success, persistence hardening, Gate 3.8 expected-name guard, and full Gate 1/2/3.1-3.8 regression.
 
-Do not authorize Gate 3.9 until Gate 3.8 is accepted.
+Do not authorize Gate 3.10 until Gate 3.9 is accepted.
