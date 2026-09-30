@@ -163,6 +163,17 @@ Active Gate 3.14 / Issue #52 / D-037: serial opt-in lifecycle around the accepte
 - Do not mutate Jobs on runner errors, recreate provider tasks or claim canonical READY from a worker-level result.
 - Real 115 credential/IndexCore/PostgreSQL startup graph and deployment remain later authorized work.
 
+## Runtime composition and secrets
+
+Active Gate 3.15 / Issue #54 / D-038.
+
+- Construct a single complete real-protocol graph from accepted Panta PostgreSQL stores, IndexCore Q5/Q8, separate trusted Mutation Hint, provider-session registry, Journal Projector, RunOnce and worker.
+- Worker-enabled startup must fail closed if any dependency, schema-v12 guard, trusted Hint configuration or exact provider/connection credential binding is absent.
+- Resolve 115 credentials through an externally injected SecretResolver; never put cookies, tokens or user magnets/URLs in Git, Panta DB, logs or diagnostic errors.
+- Never query IndexCore DB or inspect OpenList directly from Panta for acquisition visibility; Hint 202 is NOT canonical READY.
+- No new acquisition Copy writer; Q8 Projector owns Copy and D-033 canonical transaction owns READY.
+- Controlled PostgreSQL + HTTP fake E2E is authorized, live 115 account acceptance / deployment remains a later Gate.
+
 ## Job safety
 
 - `claim_attempts` = monotonic claim-generation fence.
