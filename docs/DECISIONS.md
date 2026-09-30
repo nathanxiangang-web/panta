@@ -792,3 +792,53 @@ Persistence:
 Gate 3.8 remains scoped only by `indexcore_root_id + target_path`. The Mutation Hint does not carry result_name. Exact canonical resolution using result_name is deferred to Gate 3.10.
 
 Issue #42 is the authoritative Gate 3.9 contract. Issue #41 is superseded and must not be used for implementation or acceptance.
+
+
+## D-033 — READY is anchored to one canonical projected Copy
+
+**Status:** Accepted
+
+Gate 3.9 provides a deterministic pre-canonical locator:
+
+```text
+StorageBinding.indexcore_root_id
++ Manifest.target_path
++ Manifest.result_name
+```
+
+Gate 3.10 turns that coordinate into one stable product result only after both IndexCore canonical truth and Panta Journal projection agree.
+
+READY requires:
+
+```text
+exact default-visible Q5 match
+        ↓
+one PRESENT IndexCore resource
+        ↓
+existing Q8 Journal Projector
+        ↓
+exact PRESENT Panta Copy
+        ↓
+optional monotonic Copy -> Manifest.variant_id binding
+        ↓
+Manifest.result_copy_id = Copy.ID
+Manifest READY
+Job SUCCEEDED
+```
+
+Rules:
+- a path is a coordinate, not identity;
+- zero Q5 matches is normal pending work;
+- Q5 ambiguity or multiple matches is never guessed and requires recovery;
+- the canonical match must echo the exact requested root/path and be PRESENT;
+- acquisition must not create or upsert Copy directly;
+- D-017 remains authoritative: Q8 Journal + Projector owns Copy creation and physical availability;
+- canonical confirmation may advance the existing projector by at most one bounded page per invocation;
+- if the exact Copy is not yet projected/PRESENT, the same Acquisition Job returns to RETRY_WAIT without consuming failure budget;
+- if Manifest.variant_id is set, the exact Copy must be monotonically bound to that Variant before READY; if no VariantID exists, unresolved Copy is allowed;
+- READY atomically stores an immutable `result_copy_id` and marks the same ACQUISITION Job SUCCEEDED;
+- `result_copy_id` is the durable historical acquisition result link; later Copy availability changes do not rewrite acquisition history.
+
+Migration v12 adds nullable `acquisition_manifests.result_copy_id` referencing `copies(copy_id)`, with no default and no historical backfill. New READY writes require a result_copy_id while historical pre-Gate-3.10 rows remain upgrade-compatible.
+
+Gate 3.10 does not add a continuous worker daemon, direct OpenList access, direct IndexCore database access, Search-based guessing, or a second Copy projection path.
