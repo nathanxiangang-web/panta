@@ -775,3 +775,20 @@ The finalization transaction locks the Manifest and then its Job, re-reads the
 confirming Copy under its own row lock so a stale application-layer read cannot
 authorize READY, and commits `READY` + `result_copy_id` + `SUCCEEDED` together or not
 at all. An exact replay is idempotent; a replay proposing a different Copy conflicts.
+
+
+## Canonical confirmed result link and bounded orchestration
+
+Accepted D-033 / Gate 3.10 establishes the permanent acquisition result only after:
+
+```text
+IndexCore Q5 exact PRESENT result
+  -> existing Q8 Journal Projector
+  -> exact PRESENT Panta Copy
+  -> optional monotonic Variant binding
+  -> atomic Manifest.result_copy_id + READY + same Job SUCCEEDED
+```
+
+`result_name` is the earlier provider-stage path locator; `result_copy_id` is the durable completed result link. READY replay is historical and must not depend on the current StorageBinding being ACTIVE.
+
+D-034 / Gate 3.11 permits only one persisted-Manifest-selected stage per already claimed ACQUISITION Job. It connects the existing provider-outcome, trusted IndexCore Hint and canonical-confirmation services without inventing a second Job, Copy writer, scanner, or runtime worker loop.
