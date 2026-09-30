@@ -652,3 +652,46 @@ Rules:
 The purpose is not to duplicate all historical detail. The compact memory keeps only current invariants, dangerous superseded assumptions, active Gate state, and the required reconstruction protocol.
 
 This decision was introduced after a context-drift incident in which direct Panta -> OpenList acquisition verification was proposed despite the already accepted D-018 IndexCore-owned observation boundary. D-029 corrected the architecture; D-030 prevents the same class of drift from becoming process-normal.
+
+
+## D-031 — Acquisition result identity is one direct child of target_path
+
+**Status:** Accepted
+
+Gate 3.8 established that `Manifest.target_path` is the directory scope handed to the IndexCore-owned scoped observation pipeline.
+
+Canonical acquisition confirmation must not guess which child in that directory belongs to one Manifest.
+
+The provider-neutral identity is therefore:
+
+```text
+StorageBinding.indexcore_root_id
++ Manifest.target_path
++ Manifest.expected_name
+```
+
+Semantics:
+
+```text
+Manifest.target_path
+    target directory / IndexCore scoped-refresh directory
+
+Manifest.expected_name
+    exact direct-child name expected to appear under target_path
+```
+
+Rules:
+- `expected_name` may be absent at initial Manifest creation;
+- before provider success advances to `AWAITING_VISIBILITY`, a valid expected name must be frozen;
+- if intent already supplied expected_name, a provider-reported name must match exactly;
+- if intent did not supply expected_name, a provider-reported result name may fill it atomically with provider-success handoff;
+- once frozen, expected_name is immutable through the acquisition workflow;
+- a successful provider task with neither predeclared nor reported result name cannot advance;
+- result identity is descriptive only and does not prove physical/canonical presence;
+- provider file IDs, provider directory IDs, OpenList paths, timing windows, Journal ordering and "only new item" heuristics must never substitute for this identity.
+
+A valid expected_name is one direct path segment: valid bounded UTF-8, nonblank, no NUL, no slash/backslash separator, and not `.` or `..`. Exact spelling/case is preserved.
+
+The pinned 115 adapter may map only `OfflineTask.Name` into the provider-neutral result name. `FileId` and `DirId` remain provider-private and are not IndexCore identity.
+
+Gate 3.10 may later resolve the exact canonical child path from this frozen identity; D-031 itself authorizes no Q5 lookup and no READY transition.
