@@ -13,6 +13,7 @@ import (
 	"github.com/jackc/pgx/v5/pgconn"
 	"github.com/jackc/pgx/v5/pgxpool"
 
+	"github.com/nathanxiangang-web/panta/internal/acquisition"
 	"github.com/nathanxiangang-web/panta/internal/jobs"
 )
 
@@ -30,6 +31,8 @@ const expiredLeaseMessage = "running lease expired; provider reconciliation requ
 
 type JobRepository struct {
 	pool *pgxpool.Pool
+	// Test-only hook between paired recovery mutations, proving rollback.
+	afterAcquisitionManifestRecovery func(context.Context, pgx.Tx) error
 }
 
 var _ jobs.Repository = (*JobRepository)(nil)
@@ -98,6 +101,19 @@ func (repository *JobRepository) GetByIdempotencyKey(ctx context.Context, key st
 // enough stage transitions, or block the visibility stage right after a
 // successful download.
 func (repository *JobRepository) ClaimNext(ctx context.Context, request jobs.ClaimRequest) (jobs.Job, error) {
+	return repository.claimNext(ctx, "", request)
+}
+
+// ClaimNextByType is the acquisition-only entry point for the currently
+// registered job family. Unknown types fail before any database mutation.
+func (repository *JobRepository) ClaimNextByType(ctx context.Context, jobType string, request jobs.ClaimRequest) (jobs.Job, error) {
+	if jobType != acquisition.JobTypeAcquisition {
+		return jobs.Job{}, jobs.ErrInvalidArgument
+	}
+	return repository.claimNext(ctx, jobType, request)
+}
+
+func (repository *JobRepository) claimNext(ctx context.Context, jobType string, request jobs.ClaimRequest) (jobs.Job, error) {
 	if strings.TrimSpace(request.Owner) == "" || request.Now.IsZero() || request.LeaseDuration <= 0 {
 		return jobs.Job{}, jobs.ErrInvalidArgument
 	}
@@ -105,8 +121,9 @@ func (repository *JobRepository) ClaimNext(ctx context.Context, request jobs.Cla
 WITH candidate AS (
     SELECT job_id
     FROM jobs
-    WHERE state = 'QUEUED'
-       OR (state = 'RETRY_WAIT' AND next_attempt_at <= $1)
+    WHERE ($4::text = '' OR job_type = $4)
+      AND (state = 'QUEUED'
+       OR (state = 'RETRY_WAIT' AND next_attempt_at <= $1))
     ORDER BY COALESCE(next_attempt_at, created_at), created_at, job_id
     FOR UPDATE SKIP LOCKED
     LIMIT 1
@@ -121,7 +138,7 @@ SET state = 'RUNNING',
     updated_at = $1
 FROM candidate
 WHERE job.job_id = candidate.job_id
-RETURNING `+updatedJobColumns, request.Now, request.Owner, request.LeaseDuration.Microseconds())
+RETURNING `+updatedJobColumns, request.Now, request.Owner, request.LeaseDuration.Microseconds(), jobType)
 	job, err := scanJob(row)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return jobs.Job{}, jobs.ErrNoClaimableJob
@@ -230,7 +247,8 @@ func (repository *JobRepository) MarkExpiredRunningRecoveryRequired(ctx context.
 WITH expired AS (
     SELECT job_id
     FROM jobs
-    WHERE state = 'RUNNING' AND lease_expires_at <= CURRENT_TIMESTAMP
+    WHERE state = 'RUNNING' AND job_type <> 'ACQUISITION'
+      AND lease_expires_at <= CURRENT_TIMESTAMP
     ORDER BY lease_expires_at, job_id
     FOR UPDATE SKIP LOCKED
     LIMIT $2

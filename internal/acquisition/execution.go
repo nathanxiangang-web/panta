@@ -262,9 +262,10 @@ func (service *ExecutionStepService) loadLinkedJob(ctx context.Context, request 
 	return manifest, job, nil
 }
 
-// linkedManifestID extracts the Manifest identity from a valid ACQUISITION job
-// payload without interpreting provider-specific data.
-func linkedManifestID(job jobs.Job) (ManifestID, error) {
+// LinkedManifestID extracts the Manifest identity from a valid ACQUISITION job
+// payload without interpreting provider-specific data. Lease recovery uses it before taking
+// the Manifest lock, so both paths enforce the same frozen linkage contract.
+func LinkedManifestID(job jobs.Job) (ManifestID, error) {
 	if job.Type != JobTypeAcquisition || job.IdempotencyKey == nil {
 		return "", fmt.Errorf("%w: Job %s is not an ACQUISITION Job", ErrExecutionJobMismatch, job.ID)
 	}
@@ -277,6 +278,8 @@ func linkedManifestID(job jobs.Job) (ManifestID, error) {
 	}
 	return payload.ManifestID, nil
 }
+
+func linkedManifestID(job jobs.Job) (ManifestID, error) { return LinkedManifestID(job) }
 
 // validateFencedLease proves that the durable Job is RUNNING, unexpired, owned by
 // the requesting lease holder, and still on the requesting claim generation.
