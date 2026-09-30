@@ -3,8 +3,8 @@
 > Canonical short-form project memory for Architect/AI sessions.
 >
 > Last architecture-memory synchronization: **2026-09-30**
-> Active Gate: **3.12 / Issue #48 — Acquisition-only claims and linked expired-lease recovery**
-> Governing corrections: **D-029** (IndexCore-owned observation), **D-030** (Git-first AI reconstruction), **D-032** (durable result_name locator), **D-033** (READY anchored to one canonical projected Copy), **D-034** (one-claim stage routing), and **D-035** (type-scoped claiming and atomic recovery).
+> Active Gate: **3.13 / Issue #50 — Bounded one-shot acquisition runner and recovery integration**
+> Governing corrections: **D-029** (IndexCore-owned observation), **D-030** (Git-first AI reconstruction), **D-032** (durable result_name locator), **D-033** (READY anchored to one canonical projected Copy), **D-034** (one-claim stage routing), **D-035** (type-scoped claiming and atomic recovery), and **D-036** (one explicit runner tick).
 >
 > **Read this file before planning, reviewing, or authorizing any new Gate.**
 >
@@ -248,6 +248,21 @@ Lock order: Manifest then Job. PostgreSQL time decides lease expiry; revalidate 
 
 The existing generic expired-Job sweep must not independently place an ACQUISITION Job into RECOVERY_REQUIRED. No continuous scheduling/runtime is authorized by this Gate.
 
+## 5.5 One-shot runner boundary
+
+D-036 / Gate 3.13 connects D-035 and D-034 in one explicit bounded tick:
+
+```text
+bounded paired expired acquisition recovery
+    → if no recovery debt: type-scoped ClaimNextByType(ACQUISITION)
+    → if eligible Job: one StageDispatcher.Dispatch
+    → return IDLE / recovery / one-stage outcome
+```
+
+Never claim an unrelated Job; never perform two Manifest stages in one tick; never convert a stage error into a generic Job-only Fail/Succeed/RetryAt mutation; never automatically repeat a provider side effect.
+
+Gate 3.13 does not start an autonomous background worker, timer, process runtime, or live credential integration. Later runtime wiring requires a new Gate.
+
 ## 6. Job Engine invariants
 
 The ACQUISITION Job is the durable execution safety boundary.
@@ -370,14 +385,15 @@ Accepted:
 - Gate 3.9 — durable acquisition result locator
 - Gate 3.10 — canonical Q5 + projected Copy + atomic READY finalization
 - Gate 3.11 — one-claim acquisition stage dispatcher and controlled E2E
+- Gate 3.12 — acquisition-only claims and atomic expired-lease recovery
 
 Authorized now:
-- **Gate 3.12 — Issue #48 — Acquisition-only Job claim and atomic expired-lease recovery**
+- **Gate 3.13 — Issue #50 — Bounded one-shot acquisition runner, scoped claim, and recovery integration**
 
 Not authorized yet:
 - direct Panta OpenList acquisition verifier;
 - direct acquisition Copy creation/upsert;
-- continuous worker and Gate 3.13+ work beyond current recovery prerequisites;
+- continuous worker and Gate 3.14+ work beyond the one-shot runner;
 - API/UI;
 - auth/quota/share;
 - Agent implementation;
