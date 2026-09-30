@@ -1,6 +1,8 @@
 // Package openlist defines the Panta-owned boundary for storage visibility and
-// access facts exposed by OpenList. It does not scan storage or access OpenList's
-// database.
+// access facts exposed by OpenList, and the concrete HTTP read client behind it.
+//
+// This package performs exact known-path lookups only: it never lists, walks, or
+// searches storage, and it never touches the OpenList database.
 package openlist
 
 import (
@@ -15,12 +17,18 @@ type StatRequest struct {
 }
 
 // VisibilityFact reports whether OpenList currently exposes a known path.
+//
+// A fact with Visible=false is a normal observation: OpenList does not currently
+// expose that exact path. It is never a transport, authorization, storage, or
+// provider failure, which are reported as errors instead.
 type VisibilityFact struct {
 	Mount      string
 	Path       string
 	Visible    bool
+	Name       string
 	Directory  bool
 	SizeBytes  int64
+	ModifiedAt *time.Time
 	ObservedAt time.Time
 }
 

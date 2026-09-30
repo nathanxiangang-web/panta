@@ -514,10 +514,67 @@ pre-10 counter starts with a fresh failure budget, because that counter never
 measured failures. Only generation is preserved, since only generation has a
 fencing meaning that must stay monotonic.
 
+## OpenList known-path visibility observation
+
+Gate 3.8 answers one bounded question for an `AWAITING_VISIBILITY` Manifest: does
+OpenList currently expose the exact expected path? D-028 freezes the address mapping:
+
+```text
+OpenList request path = Join(StorageBinding.openlist_mount_path, Manifest.target_path)
+
+mount "/"     + target "/downloads/item"  ->  "/downloads/item"
+mount "/115"  + target "/downloads/item"  ->  "/115/downloads/item"
+```
+
+The mount is the mount coordinate and the target is the path inside that binding's
+observed namespace. Neither `provider_scope` nor `indexcore_root_id` participates:
+the mapping is configuration, not derivation. The joined path must stay absolute,
+normalized, NUL-free, and beneath or equal to the configured mount, which is checked
+before any network call.
+
+`internal/integrations/openlist.HTTPClient` implements the existing
+`VisibilityPort` over `POST <base>/api/fs/get`, a configured base path is preserved,
+the body carries exactly the requested path with no list or mutation fields, and an
+optional `Authorization` token is sent verbatim and redacted from every message the
+client can produce. The client never lists, walks, searches, or touches the OpenList
+database, and it issues exactly one request.
+
+Classification is exact, because OpenList carries application errors in an HTTP 200
+envelope:
+
+```text
+HTTP 200 + envelope code 200 + one valid object   -> VISIBLE
+HTTP 200 + envelope "object not found" (exact)     -> NOT_VISIBLE
+HTTP 200 + any other non-200 envelope              -> ErrRemote
+non-2xx HTTP                                       -> ErrRemote
+malformed / trailing / oversized JSON              -> ErrMalformedResponse
+transport failure                                  -> ErrTransport
+```
+
+Only the exact upstream sentinel may produce `NOT_VISIBLE`. Authorization failures,
+storage-not-ready, provider failures, near-miss messages, and non-2xx responses all
+stay errors, so an integration failure can never be mistaken for an absent object.
+A `NOT_VISIBLE` fact echoes the requested mount and path, `VISIBLE` requires exactly
+one object whose name matches the requested basename with a non-negative size, and
+unknown object fields such as raw download URLs are tolerated but never persisted or
+treated as proof.
+
+`acquisition.VisibilityVerifier` loads the Manifest, requires `AWAITING_VISIBILITY`,
+resolves and validates the ACTIVE binding, derives the D-028 path, calls `Stat`
+exactly once, and validates that the returned fact identity matches the request. It
+returns `VISIBLE` or `NOT_VISIBLE` plus the observed facts. `NOT_VISIBLE` is a normal
+observation: it means only that OpenList does not currently expose the exact path. It
+is not a provider failure and does not authorize another provider task.
+
+This gate is observation only. It does not mutate the Manifest or Job, does not
+commit a visibility-stage outcome, does not call IndexCore, and does not advance to
+`AWAITING_CANONICAL` or `READY`.
+
 ## Deferred capabilities
 
-Source Resolver/provider syntax normalization, the Job worker loop, OpenList
-visibility verification, Mutation Hint/scoped refresh, the AWAITING_CANONICAL
-transition, canonical READY confirmation, auth/quota, and API/UI are separately
-authorized later work. A real secret backend, the 115 ShareProvider, and
-115-specific retry policy are also deferred.
+Source Resolver/provider syntax normalization, the Job worker loop, the
+visibility-stage Job outcome commit, polling cadence, Mutation Hint/scoped refresh,
+the AWAITING_CANONICAL transition, canonical READY confirmation, OpenList access/302
+resolution, auth/quota, and API/UI are separately authorized later work. A real
+secret backend, the 115 ShareProvider, and 115-specific retry policy are also
+deferred.

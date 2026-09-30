@@ -45,6 +45,18 @@ func TestGateZeroDomainImportBoundaries(t *testing.T) {
 			forbidden:   []string{"github.com/jackc/pgx", "database/sql", "/providers/115"},
 		},
 		{
+			// The OpenList integration is a pure HTTP read adapter: it may use the
+			// standard library and its own port contracts, and nothing else in Panta.
+			packagePath: "github.com/nathanxiangang-web/panta/internal/integrations/openlist",
+			forbidden: []string{
+				"github.com/jackc/pgx", "database/sql",
+				"/internal/acquisition", "/internal/jobs", "/internal/store",
+				"/internal/providers", "/providers/115",
+				"/internal/integrations/indexcore",
+				"/internal/search", "/internal/agent", "/internal/auth",
+			},
+		},
+		{
 			packagePath: "github.com/nathanxiangang-web/panta/internal/storage",
 			forbidden: []string{
 				"github.com/jackc/pgx", "database/sql", "/internal/providers", "/providers/115",
@@ -160,6 +172,16 @@ var allowedDomainDependencies = []struct {
 		dependent: "github.com/nathanxiangang-web/panta/internal/acquisition",
 		imported:  "github.com/nathanxiangang-web/panta/internal/providers/contracts",
 		relaxed:   "/internal/providers",
+	},
+	{
+		// Gate 3.8: the acquisition visibility verifier depends on the Panta-owned
+		// OpenList visibility port. The integration package also holds the concrete
+		// HTTP client, so this is auditable rather than airtight; the behavioral
+		// guarantee that acquisition never drives list/search/walk lives in the
+		// verifier's own tests and in its single Stat call.
+		dependent: "github.com/nathanxiangang-web/panta/internal/acquisition",
+		imported:  "github.com/nathanxiangang-web/panta/internal/integrations/openlist",
+		relaxed:   "/internal/integrations/openlist",
 	},
 }
 

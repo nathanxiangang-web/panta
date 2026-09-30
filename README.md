@@ -244,6 +244,17 @@ increments and that fences lease mutations, while `attempt_count`
 budget is spent, so provider polling, the visibility stage, and later stages can
 each be scheduled repeatedly without starving the failure retry budget.
 
+Gate 3.8 adds the OpenList known-path visibility observation.
+`internal/integrations/openlist` implements the existing `VisibilityPort` over
+`POST /api/fs/get`, and `acquisition.VisibilityVerifier` checks an
+`AWAITING_VISIBILITY` Manifest against the D-028 address
+`Join(binding.openlist_mount_path, manifest.target_path)` — never derived from
+`provider_scope` or the IndexCore root. Only OpenList's exact `object not found`
+envelope yields `NOT_VISIBLE`; authorization, storage, provider, transport, and
+non-2xx outcomes stay typed integration errors, so a failure can never masquerade as
+an absent object. The gate is observation only: it mutates no Manifest or Job, calls
+no IndexCore, and does not reach `AWAITING_CANONICAL` or `READY`.
+
 The module stores no physical inventory and has no IndexCore/OpenList database
 or network dependency. Real clients, Journal cursors/projectors, Copy updates,
 visibility checks, Mutation Hints, and provider-specific behavior remain outside
