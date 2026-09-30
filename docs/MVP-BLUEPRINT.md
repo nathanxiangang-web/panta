@@ -316,6 +316,9 @@ DownloaderProvider
       ↓
 provider reports completion
       ↓
+durable result_name
+(provider ResultName > ExpectedName fallback)
+      ↓
 Manifest AWAITING_VISIBILITY
       ↓
 Panta → trusted IndexCore Mutation Hint
@@ -341,6 +344,8 @@ Copy READY
 IndexCore Hint `202 Accepted` is not canonical confirmation and is not `READY`.
 
 Panta does not directly call OpenList to verify acquisition visibility. OpenList remains inside the IndexCore-owned observation pipeline.
+
+Before provider success may advance to observation, Panta must have one durable top-level `result_name`. It must never guess the acquired object by listing the target directory. The future exact canonical candidate path is `Join(target_path, result_name)`.
 
 READY requires canonical confirmation from IndexCore Query/Journal plus the corresponding Panta Copy projection/association.
 
@@ -581,6 +586,7 @@ Build:
 - Acquisition Manifest;
 - durable provider-task side-effect fence;
 - connection-scoped provider session/credential boundary;
+- durable provider-neutral acquisition result locator;
 - trusted IndexCore Mutation Hint integration;
 - acquisition Job stage handoff/retry;
 - IndexCore canonical confirmation / Journal completion path.
