@@ -6,7 +6,7 @@
 
 **MVP implementation — Gate 3**
 
-Gate 0, Gate 1, and Gate 2 are formally accepted and closed. Gate 3.1 through Gate 3.13 are accepted and merged. Gate 3.14 is authorized and in progress.
+Gate 0, Gate 1, and Gate 2 are formally accepted and closed. Gate 3.1 through Gate 3.14 are accepted and merged. Gate 3.15 is authorized and in progress.
 
 ## Accepted baseline
 
@@ -822,9 +822,9 @@ Until the relevant gate is accepted, do not implement:
 
 ## Next architect action
 
-Review Gate 3.14 PR against **Issue #52 / D-037**: explicit opt-in disabled-by-default serial worker lifecycle, one in-flight RunOnce, bounded cadence/deadline-vs-lease policy, unique stable owner, cancellation and error handling, fatal recovery-debt stop, no Job-only error repair, controlled PostgreSQL evidence and all prior Gate regressions.
+Review Gate 3.15 PR against **Issue #54 / D-038**: one fail-closed enabled runtime graph combining accepted PostgreSQL stores, IndexCore Q5/Q8 + trusted Hint clients, the Journal Projector, exact provider-session registry, D-036 RunOnce and D-037 Worker. Check injected credential safety, schema v12 guard, owned-resource shutdown, controlled real-protocol PostgreSQL/HTTP E2E and exact-head CI.
 
-Do not authorize real 115/IndexCore credential startup, production deployment or Gate 3.15 until Gate 3.14 is accepted.
+Do not authorize real-account 115 acceptance, public API/UI, deployment or Gate 3.16 until Gate 3.15 is accepted.
 
 
 ## Current bounded task
@@ -990,9 +990,17 @@ Explicitly deferred:
 
 ### Gate 3.14 — Opt-in serial acquisition worker lifecycle and bounded scheduling
 
-Status: **AUTHORIZED / IN PROGRESS**
+Status: **ACCEPTED**
 
-Tracking: GitHub Issue #52
+Tracking: GitHub Issue #52 / PR #53
+
+Merge evidence:
+- reviewed HEAD `89e3d202703dbd082600a1f48157feb69c19562b`;
+- squash commit `f2759f37cb8fc8a96508aa36e604ac0eaf6a5bf8`;
+- Architect Review `5367757918` ACCEPTED;
+- exact-head CI `36729766059`: unit/architecture/race/vet/build, PG16 migrations/integration, PG18 controlled observation all SUCCESS.
+
+Accepted boundaries: disabled-by-default worker, enabled-unwired startup fails closed, stable unique random worker owner, serial immediate RunOnce + interruptible bounded interval, timeout/lease margin, paced transient error, fatal recovery debt, safe cancellation, post-cancel START_RESERVED plus paired recovery. No live 115/IndexCore/PG runtime composition yet; no new migrations, schema v12.
 
 Governing decision: D-037.
 
@@ -1008,3 +1016,22 @@ Explicitly deferred:
 - real production PostgreSQL/IndexCore/115 secret session composition and deployment;
 - public API/UI, Source Resolver, share/auth/quota/access, Agent;
 - distributed scheduling or multiple worker concurrency.
+
+## Current bounded task
+
+### Gate 3.15 — Fail-closed runtime composition and controlled real-protocol acquisition E2E
+
+Status: **AUTHORIZED / IN PROGRESS**
+
+Tracking: GitHub Issue #54
+
+Governing decision: D-038.
+
+Scope:
+- compose and validate one complete Panta product DB/repository/IndexCore read and trusted Hint/provider-session/Projector/RunOnce/Worker runtime graph;
+- secrets injected through external port, exact provider/connection/credential binding; no credential persistence or logs;
+- startup checks Panta schema v12 and fails closed on missing dependencies; owned resources close on cancellation;
+- controlled PostgreSQL + HTTP-fake E2E shows provider → Hint → canonical Q5/Journal/Copy → READY;
+- no new schema migration planned.
+
+Deferred: real 115 account login, production deployment, Source Resolver, public API/UI and distributed scheduling.
