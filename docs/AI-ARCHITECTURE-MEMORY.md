@@ -3,8 +3,8 @@
 > Canonical short-form project memory for Architect/AI sessions.
 >
 > Last architecture-memory synchronization: **2026-09-30**
-> Active Gate: **3.9 / Issue #41 — Deterministic acquired-result identity capture**
-> Governing corrections: **D-029** (IndexCore-owned observation), **D-030** (Git-first AI reconstruction), and **D-031** (deterministic direct-child acquisition identity).
+> Active Gate: **3.9 / Issue #42 — Durable acquisition result locator before canonical confirmation**
+> Governing corrections: **D-029** (IndexCore-owned observation), **D-030** (Git-first AI reconstruction), and **D-032** (separate durable result_name locator).
 >
 > **Read this file before planning, reviewing, or authorizing any new Gate.**
 >
@@ -163,26 +163,37 @@ reason    = POSSIBLE_CHANGE
 
 Do not use `openlist_mount_path` or `provider_scope` to build the Hint.
 
-## 5.1 Deterministic acquisition child identity
+## 5.1 Deterministic acquisition result locator
 
-Before a newly successful provider acquisition can proceed beyond the provider stage, Panta must know one exact child name under the target directory:
+Before provider success may advance automatically beyond the provider stage, Panta must durably resolve one top-level locator:
 
 ```text
-indexcore_root_id
-+ manifest.target_path
-+ manifest.expected_name
+valid provider-observed TaskStatus.ResultName
+        >
+Manifest.ExpectedName fallback
+        ↓
+Manifest.result_name
+```
+
+Canonical candidate identity for the later gate is:
+
+```text
+StorageBinding.indexcore_root_id
++ Manifest.target_path
++ Manifest.result_name
 ```
 
 Semantics:
-- `target_path` = directory scope refreshed by IndexCore;
-- `expected_name` = exact direct child expected under that scope;
-- expected_name may be absent when the Manifest is first created;
-- provider success must freeze it before `AWAITING_VISIBILITY`;
-- if intent already supplied the name, provider-reported identity must match exactly;
-- no provider FileId/DirId, OpenList path, Journal ordering, timing window, newest-item or only-item heuristic may replace it;
-- the 115 adapter may use only successful `OfflineTask.Name` for this provider-neutral identity.
+- `target_path` remains the directory scope refreshed by IndexCore;
+- `expected_name` remains optional request-time intent/fallback and is not rewritten by provider execution;
+- `result_name` is the immutable durable acquired-result locator;
+- a valid provider-observed name wins over ExpectedName;
+- blank/absent provider name may fall back to a valid ExpectedName;
+- an invalid nonblank provider name fails closed instead of silently falling back;
+- no provider FileId/DirId, OpenList path, Journal ordering, timing window, newest-item or only-item heuristic may replace result_name;
+- result_name is locator evidence only, never Canonical truth or READY.
 
-Gate 3.10 may later use the frozen identity for exact canonical confirmation. Gate 3.9 does not authorize Q5/READY.
+Gate 3.10 may later use the frozen locator for exact canonical confirmation.
 
 ## 6. Job Engine invariants
 
@@ -305,7 +316,7 @@ Accepted:
 - Gate 3.8 — IndexCore trusted Mutation Hint and observation handoff
 
 Authorized now:
-- **Gate 3.9 — Issue #41 — Deterministic acquired-result identity capture**
+- **Gate 3.9 — Issue #42 — Durable acquisition result locator before canonical confirmation**
 
 Not authorized yet:
 - direct Panta OpenList acquisition verifier;

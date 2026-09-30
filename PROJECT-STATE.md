@@ -764,32 +764,6 @@ Explicitly deferred:
 - acquisition worker loop;
 - public API/UI.
 
-## Current bounded task
-
-### Gate 3.9 — Deterministic acquired-result identity capture
-
-Status: **AUTHORIZED / IN PROGRESS**
-
-Tracking: GitHub Issue #41
-
-Scope:
-- freeze target_path as the refreshed directory scope and expected_name as its exact direct child;
-- expose provider-neutral optional download result name;
-- map successful 115 OfflineTask.Name only, never FileId/DirId;
-- carry provider result identity through ExecutionStep;
-- atomically freeze expected_name with PROVIDER_SUCCEEDED -> AWAITING_VISIBILITY + RETRY_WAIT;
-- fail closed on missing or conflicting result identity;
-- harden expected_name persistence as a direct-child segment;
-- require a valid expected_name before Gate 3.8 may submit a fresh Mutation Hint.
-
-Explicitly deferred:
-- Q5/Journal canonical confirmation;
-- Copy/Projector completion orchestration;
-- READY transition;
-- acquisition worker loop;
-- Source Resolver normalization;
-- public API/UI.
-
 ## Planned Gate 0 task sequence
 
 - Gate 0.1 — Skeleton + first ports — **ACCEPTED**
@@ -832,6 +806,6 @@ Until the relevant gate is accepted, do not implement:
 
 ## Next architect action
 
-Review the Gate 3.9 PR for Issue #41 against D-031 direct-child identity semantics, provider-neutral result-name propagation, atomic expected_name freeze on provider success, persistence hardening, Gate 3.8 expected-name guard, and full Gate 1/2/3.1-3.8 regression.
+Review the Gate 3.9 PR against **Issue #42 / D-032**: separate immutable Manifest.result_name from request-time ExpectedName, provider ResultName precedence with ExpectedName fallback, atomic result_name + AWAITING_VISIBILITY + RETRY_WAIT persistence, migration v11, and full Gate 1/2/3.1-3.8 regression.
 
-Do not authorize Gate 3.10 until Gate 3.9 is accepted.
+Issue #41 is superseded / NOT PLANNED. Do not authorize Gate 3.10 until Issue #42 is accepted and merged.

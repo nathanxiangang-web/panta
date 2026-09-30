@@ -736,3 +736,59 @@ Rules:
 The 115 adapter may source this field only from the pinned upstream offline task `Name`. It must not fabricate the name from magnet metadata, URL text, provider scope, Target.Path, FileId, or DirId.
 
 Gate 3.9 captures this locator. Exact IndexCore Q5/Journal confirmation remains a later Gate.
+
+
+## D-032 — result_name is the durable acquisition locator; expected_name remains intent/fallback
+
+**Status:** Accepted
+
+This decision resolves the duplicate D-031 entries and is authoritative wherever they conflict.
+
+The earlier D-031 interpretation that reused and mutated `Manifest.expected_name` as the final acquired-result locator is superseded.
+
+The durable model is:
+
+```text
+Manifest.expected_name
+    optional request-time expectation / fallback hint
+
+Manifest.result_name
+    provider-stage durable top-level acquired-result locator
+```
+
+Canonical candidate identity for later confirmation is:
+
+```text
+StorageBinding.indexcore_root_id
++ Manifest.target_path
++ Manifest.result_name
+```
+
+Rules:
+
+1. `target_path` remains the directory scope refreshed by IndexCore.
+2. `expected_name` remains request intent and is not rewritten by provider execution.
+3. `result_name` is a separate nullable persistence field introduced by Gate 3.9.
+4. A valid provider-observed result name takes precedence over `expected_name`.
+5. `expected_name` is used only when the provider reports no result name.
+6. If the provider reports an invalid nonblank result name, fail closed; do not silently fall back.
+7. If the provider reports no name and expected_name is absent/invalid, provider success cannot advance automatically.
+8. Once persisted, `result_name` is immutable; same-value replay is idempotent and different-value replay conflicts.
+9. `result_name` is locator evidence only. It is never Canonical truth and never READY.
+10. Provider FileId/DirId, OpenList paths, timing, Journal ordering, newest-item and only-item heuristics cannot substitute for `result_name`.
+
+For the pinned 115 adapter:
+- successful `OfflineTask.Name` may populate provider-neutral `TaskStatus.ResultName`;
+- a blank/absent upstream name yields SUCCEEDED with no ResultName, allowing acquisition-level `expected_name` fallback;
+- invalid nonblank/unbounded names fail closed;
+- FileId and DirId remain provider-private.
+
+Persistence:
+- migration v11 adds nullable `acquisition_manifests.result_name`;
+- existing v10 rows are preserved with `result_name = NULL`;
+- no database default is allowed;
+- the provider-success transition, not a historical migration rewrite, enforces that new automatic progression to observation has a resolved result locator.
+
+Gate 3.8 remains scoped only by `indexcore_root_id + target_path`. The Mutation Hint does not carry result_name. Exact canonical resolution using result_name is deferred to Gate 3.10.
+
+Issue #42 is the authoritative Gate 3.9 contract. Issue #41 is superseded and must not be used for implementation or acceptance.
