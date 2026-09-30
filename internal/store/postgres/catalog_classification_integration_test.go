@@ -20,7 +20,7 @@ func TestPostgresCopyClassificationIsMonotonicConcurrentAndProjectorSafe(t *test
 		t.Fatalf("NewMigrator() error = %v", err)
 	}
 	status, err := migrator.Apply(ctx)
-	if err != nil || !status.Compatible || status.CurrentVersion != 10 || status.LatestVersion != 10 {
+	if err != nil || !status.Compatible || status.CurrentVersion != 11 || status.LatestVersion != 11 {
 		t.Fatalf("Apply() = %#v, %v", status, err)
 	}
 

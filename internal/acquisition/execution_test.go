@@ -689,8 +689,8 @@ func TestExecutionStepStartsDownloadOnceAndPersistsOpaqueReference(t *testing.T)
 	if err != nil {
 		t.Fatalf("Execute() error = %v", err)
 	}
-	if outcome != acquisition.OutcomeProviderInProgress {
-		t.Fatalf("Execute() outcome = %q, want %q", outcome, acquisition.OutcomeProviderInProgress)
+	if !outcome.Succeeded() && outcome.Outcome != acquisition.OutcomeProviderInProgress {
+		t.Fatalf("Execute() outcome = %q, want %q", outcome.Outcome, acquisition.OutcomeProviderInProgress)
 	}
 	start, status, refs := fixture.provider.counts()
 	if start != 1 {
@@ -768,10 +768,10 @@ func TestExecutionStepMapsProviderTaskStates(t *testing.T) {
 			if err != nil {
 				t.Fatalf("replay Execute() error = %v", err)
 			}
-			if outcome != test.want {
-				t.Fatalf("outcome = %q, want %q", outcome, test.want)
+			if outcome.Outcome != test.want {
+				t.Fatalf("outcome = %q, want %q", outcome.Outcome, test.want)
 			}
-			if string(outcome) == string(acquisition.StateReady) {
+			if string(outcome.Outcome) == string(acquisition.StateReady) {
 				t.Fatal("provider success must never map to Manifest READY")
 			}
 		})
@@ -858,8 +858,8 @@ func TestExecutionStepReportsUncertainSideEffectWhenReferenceCannotCommit(t *tes
 	if !errors.Is(err, acquisition.ErrExecutionSideEffectUncertain) {
 		t.Fatalf("Execute() error = %v, want ErrExecutionSideEffectUncertain", err)
 	}
-	if outcome != "" {
-		t.Fatalf("outcome = %q, want empty on uncertain side effect", outcome)
+	if outcome.Outcome != "" || outcome.ResultName != nil {
+		t.Fatalf("outcome = %+v, want an empty result on uncertain side effect", outcome)
 	}
 	start, status, _ := fixture.provider.counts()
 	if start != 1 {
@@ -888,8 +888,8 @@ func TestExecutionStepUncertainFenceForbidsAnyFurtherStartDownload(t *testing.T)
 		if !errors.Is(err, acquisition.ErrExecutionSideEffectUncertain) {
 			t.Fatalf("attempt %d error = %v, want ErrExecutionSideEffectUncertain", attempt, err)
 		}
-		if outcome != "" {
-			t.Fatalf("attempt %d outcome = %q, want empty", attempt, outcome)
+		if outcome.Outcome != "" || outcome.ResultName != nil {
+			t.Fatalf("attempt %d outcome = %+v, want empty", attempt, outcome)
 		}
 		start, _, _ := fixture.provider.counts()
 		if start != 1 {
@@ -1025,7 +1025,7 @@ func TestExecutionStepConcurrentExecutionsStartAtMostOneProviderTask(t *testing.
 	fixture.provider.setState("provider-task-0001", contracts.TaskStateRunning)
 
 	var waitGroup sync.WaitGroup
-	outcomes := make([]acquisition.StepOutcome, workers)
+	outcomes := make([]acquisition.StepResult, workers)
 	errs := make([]error, workers)
 	start := make(chan struct{})
 	for worker := 0; worker < workers; worker++ {
@@ -1060,8 +1060,8 @@ func TestExecutionStepConcurrentExecutionsStartAtMostOneProviderTask(t *testing.
 	var inProgress, uncertain int
 	for index := 0; index < workers; index++ {
 		if errs[index] == nil {
-			if outcomes[index] != acquisition.OutcomeProviderInProgress {
-				t.Fatalf("worker %d outcome = %q, want PROVIDER_IN_PROGRESS", index, outcomes[index])
+			if outcomes[index].Outcome != acquisition.OutcomeProviderInProgress {
+				t.Fatalf("worker %d outcome = %q, want PROVIDER_IN_PROGRESS", index, outcomes[index].Outcome)
 			}
 			inProgress++
 			continue
@@ -1069,8 +1069,8 @@ func TestExecutionStepConcurrentExecutionsStartAtMostOneProviderTask(t *testing.
 		if !errors.Is(errs[index], acquisition.ErrExecutionSideEffectUncertain) {
 			t.Fatalf("worker %d error = %v, want nil or ErrExecutionSideEffectUncertain", index, errs[index])
 		}
-		if outcomes[index] != "" {
-			t.Fatalf("worker %d uncertain outcome = %q, want empty", index, outcomes[index])
+		if outcomes[index].Outcome != "" || outcomes[index].ResultName != nil {
+			t.Fatalf("worker %d uncertain outcome = %+v, want empty", index, outcomes[index])
 		}
 		uncertain++
 	}
@@ -1142,8 +1142,8 @@ func TestExecutionStepSurvivesRestartAndPollsExistingTask(t *testing.T) {
 	if err != nil {
 		t.Fatalf("restarted Execute() error = %v", err)
 	}
-	if outcome != acquisition.OutcomeProviderSucceeded {
-		t.Fatalf("restarted outcome = %q, want %q", outcome, acquisition.OutcomeProviderSucceeded)
+	if outcome.Outcome != acquisition.OutcomeProviderSucceeded {
+		t.Fatalf("restarted outcome = %q, want %q", outcome.Outcome, acquisition.OutcomeProviderSucceeded)
 	}
 	start, status, refs := fixture.provider.counts()
 	if start != 1 {
@@ -1196,8 +1196,8 @@ func TestExecutionStepRestartWithFreshProviderPollsStoredReference(t *testing.T)
 	if err != nil {
 		t.Fatalf("restarted Execute() error = %v", err)
 	}
-	if outcome != acquisition.OutcomeProviderSucceeded {
-		t.Fatalf("restarted outcome = %q, want %q", outcome, acquisition.OutcomeProviderSucceeded)
+	if outcome.Outcome != acquisition.OutcomeProviderSucceeded {
+		t.Fatalf("restarted outcome = %q, want %q", outcome.Outcome, acquisition.OutcomeProviderSucceeded)
 	}
 	if start, status, refs := restartedProvider.counts(); start != 0 || status != 1 || refs[0] != stored.ProviderTaskRef {
 		t.Fatalf("restarted provider calls start=%d status=%d refs=%q, want no StartDownload and one poll of %q",

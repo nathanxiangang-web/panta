@@ -47,8 +47,8 @@ func TestGateZeroAcceptance(t *testing.T) {
 		t.Fatalf("Apply() error = %v", err)
 	}
 	assertCurrentSchema(t, status)
-	if len(status.Applied) != 10 || status.Applied[0].Version != 1 || status.Applied[1].Version != 2 || status.Applied[2].Version != 3 || status.Applied[3].Version != 4 || status.Applied[4].Version != 5 || status.Applied[5].Version != 6 || status.Applied[6].Version != 7 || status.Applied[7].Version != 8 || status.Applied[8].Version != 9 || status.Applied[9].Version != 10 {
-		t.Fatalf("applied migrations = %#v, want ordered 0001 through 0010", status.Applied)
+	if len(status.Applied) != 11 || status.Applied[0].Version != 1 || status.Applied[1].Version != 2 || status.Applied[2].Version != 3 || status.Applied[3].Version != 4 || status.Applied[4].Version != 5 || status.Applied[5].Version != 6 || status.Applied[6].Version != 7 || status.Applied[7].Version != 8 || status.Applied[8].Version != 9 || status.Applied[9].Version != 10 || status.Applied[10].Version != 11 {
+		t.Fatalf("applied migrations = %#v, want ordered 0001 through 0011", status.Applied)
 	}
 	seedStorageBinding(t, ctx, pool, storage.BindingID("a0000000-0000-4000-8000-000000000005"), "root-gate0")
 

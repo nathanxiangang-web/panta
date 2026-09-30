@@ -100,18 +100,51 @@ FOR UPDATE`, string(plan.ManifestID)))
 		return acquisition.ProviderOutcomeResult{}, err
 	}
 
-	// Mutation 1: advance the Manifest milestone only while it still holds the
-	// accepted pre-handoff state. When the outcome keeps the Manifest at ACTIVE,
-	// updated_at is deliberately preserved: nothing about the Manifest changed, so
-	// rewriting its timestamp would be a spurious durable write.
-	updatedManifest, err := scanAcquisitionManifest(tx.QueryRow(ctx, `
+	// Resolve the D-032 durable locator for a provider success from the locked
+	// Manifest and the provider-reported name. This happens before any mutation so a
+	// conflict or a missing locator fails closed with nothing written. expected_name
+	// is read as the fallback and is never rewritten.
+	var resolvedResultName *string
+	if plan.Outcome == acquisition.ProviderOutcomeSucceeded {
+		name, err := resolveResultNameForSuccess(manifest, plan)
+		if err != nil {
+			return acquisition.ProviderOutcomeResult{}, err
+		}
+		resolvedResultName = name
+	}
+
+	var updatedManifest acquisition.Manifest
+	if resolvedResultName != nil {
+		// Mutation 1a (provider success): freeze the locator and advance the milestone
+		// in one statement, so the locator and the state can never diverge. The
+		// result_name predicate fences a concurrent conflicting resolution, and the
+		// IS NOT DISTINCT FROM comparison is null-safe for a currently-NULL locator.
+		updatedManifest, err = scanAcquisitionManifest(tx.QueryRow(ctx, `
+UPDATE acquisition_manifests
+SET state = $3,
+    result_name = $5,
+    updated_at = $4
+WHERE manifest_id = $1 AND state = $2
+  AND result_name IS NOT DISTINCT FROM $6
+RETURNING `+acquisitionManifestColumns,
+			string(plan.ManifestID), string(acquisition.StateActive), string(plan.ManifestState),
+			plan.Now, *resolvedResultName, manifest.ResultName))
+	} else {
+		// Mutation 1b (every other outcome): advance the milestone without touching
+		// identity. When the outcome keeps the Manifest at ACTIVE, updated_at is
+		// deliberately preserved: nothing about the Manifest changed, so rewriting its
+		// timestamp would be a spurious durable write.
+		updatedManifest, err = scanAcquisitionManifest(tx.QueryRow(ctx, `
 UPDATE acquisition_manifests
 SET state = $3,
     updated_at = CASE WHEN state = $3 THEN updated_at ELSE $4 END
 WHERE manifest_id = $1 AND state = $2
 RETURNING `+acquisitionManifestColumns,
-		string(plan.ManifestID), string(acquisition.StateActive), string(plan.ManifestState), plan.Now))
+			string(plan.ManifestID), string(acquisition.StateActive), string(plan.ManifestState), plan.Now))
+	}
 	if errors.Is(err, pgx.ErrNoRows) {
+		// Either the Manifest moved on, or a concurrent handoff froze a different
+		// expected name. Both are conflicts on the same durable identity.
 		return acquisition.ProviderOutcomeResult{}, fmt.Errorf("%w: Manifest %s changed during handoff",
 			acquisition.ErrProviderOutcomeConflict, plan.ManifestID)
 	}
@@ -140,9 +173,33 @@ RETURNING `+acquisitionManifestColumns,
 	return acquisition.ProviderOutcomeResult{Manifest: updatedManifest, Job: updatedJob, Changed: true}, nil
 }
 
+// resolveResultNameForSuccess applies the frozen D-032 locator rules to the locked
+// Manifest and the provider-reported name.
+//
+// The transaction and the domain share one decision table through
+// acquisition.ResolveResultName, so persistence cannot drift from the contract.
+func resolveResultNameForSuccess(
+	manifest acquisition.Manifest,
+	plan acquisition.ProviderOutcomePlan,
+) (*string, error) {
+	resolved, _, err := acquisition.ResolveResultName(
+		manifest.ResultName, plan.ProviderResultName, manifest.ExpectedName)
+	if err != nil {
+		return nil, err
+	}
+	return &resolved, nil
+}
+
 // isCommittedOutcome reports whether the durable records already hold exactly the
 // outcome this plan would commit. Both halves of the D-026 pairing must match, so
 // a different proposed outcome after a committed one still fails closed.
+//
+// For a provider success the plan must also agree on the durable locator. The replay
+// branch returns before the fresh path can apply the D-032 immutability rule, so a
+// committed AWAITING_VISIBILITY pair replayed with a DIFFERENT provider-observed name
+// would otherwise be silently reported as an idempotent no-op instead of failing
+// closed. A blank or absent provider name carries no new evidence and is therefore
+// never a conflict.
 func (repository *ProviderOutcomeRepository) isCommittedOutcome(
 	manifest acquisition.Manifest,
 	job jobs.Job,
@@ -161,7 +218,27 @@ func (repository *ProviderOutcomeRepository) isCommittedOutcome(
 	if err := acquisition.ValidateLinkedAcquisitionJob(manifest.ID, job); err != nil {
 		return false, fmt.Errorf("%w: %w", acquisition.ErrProviderOutcomeJobMismatch, err)
 	}
+	if plan.Outcome == acquisition.ProviderOutcomeSucceeded {
+		if err := verifyCommittedLocator(manifest, plan); err != nil {
+			return false, err
+		}
+	}
 	return true, nil
+}
+
+// verifyCommittedLocator proves a replayed provider success agrees with the durable
+// acquired-result locator. It applies the same rule as the fresh path through
+// acquisition.ResolveResultName, so replay and fresh handoff share one decision table.
+func verifyCommittedLocator(manifest acquisition.Manifest, plan acquisition.ProviderOutcomePlan) error {
+	providerResult := acquisition.ProviderResultNameFromStatus(plan.ProviderResultName)
+	if providerResult == nil {
+		// No new evidence: the persisted locator stands.
+		return nil
+	}
+	if _, _, err := acquisition.ResolveResultName(manifest.ResultName, providerResult, manifest.ExpectedName); err != nil {
+		return err
+	}
+	return nil
 }
 
 // mutateJobForOutcome applies the D-026 Job semantics under the claim-generation

@@ -48,6 +48,22 @@ const (
 	OutcomeProviderCanceled   StepOutcome = "PROVIDER_CANCELED"
 )
 
+// StepResult is the closed provider-neutral result of one bounded execution step.
+//
+// ResultName is set only when the provider actually reported an acquired top-level
+// object name for a successful step. It is plain descriptive identity: it is not
+// persisted in the Job payload or provider-task rows, and it does not prove
+// canonical presence.
+type StepResult struct {
+	Outcome StepOutcome
+	// ResultName is the exact provider-reported direct-child name, or nil when the
+	// provider reported none. A non-nil value is never trimmed or normalized.
+	ResultName *string
+}
+
+// Succeeded reports whether the provider stage completed.
+func (result StepResult) Succeeded() bool { return result.Outcome == OutcomeProviderSucceeded }
+
 // JobReader is the narrow Job Engine read port used to prove the fenced lease and
 // the frozen Gate 3.2 Manifest linkage. It carries no persistence or lease
 // mutation responsibility: the Job Engine still owns execution state.
@@ -133,31 +149,31 @@ func NewExecutionStepService(
 // identity, and performs exactly one bounded provider step: either StartDownload
 // once followed by durable linkage, or DownloadStatus for an already-linked task.
 // It performs no OpenList, IndexCore, canonical confirmation, or Copy mutation.
-func (service *ExecutionStepService) Execute(ctx context.Context, request StepRequest) (StepOutcome, error) {
+func (service *ExecutionStepService) Execute(ctx context.Context, request StepRequest) (StepResult, error) {
 	if err := ctx.Err(); err != nil {
-		return "", err
+		return StepResult{}, err
 	}
 	if request.JobID == "" || request.Owner == "" || request.ClaimAttempt < 1 {
-		return "", ErrInvalidExecutionRequest
+		return StepResult{}, ErrInvalidExecutionRequest
 	}
 
 	manifest, job, err := service.loadLinkedJob(ctx, request)
 	if err != nil {
-		return "", err
+		return StepResult{}, err
 	}
 	input, err := service.inputs.Resolve(ctx, manifest.ID)
 	if err != nil {
-		return "", err
+		return StepResult{}, err
 	}
 	if input.ManifestID != manifest.ID {
-		return "", fmt.Errorf("%w: requested Manifest %s, got %s", ErrExecutionIdentityMismatch, manifest.ID, input.ManifestID)
+		return StepResult{}, fmt.Errorf("%w: requested Manifest %s, got %s", ErrExecutionIdentityMismatch, manifest.ID, input.ManifestID)
 	}
 
 	// Provider identity, connection identity, and the opaque credential reference
 	// together select the downloader. ProviderID alone never does.
 	downloader, err := service.resolveDownloaderSession(ctx, input)
 	if err != nil {
-		return "", err
+		return StepResult{}, err
 	}
 
 	task, err := service.tasks.GetProviderTask(ctx, manifest.ID)
@@ -165,16 +181,16 @@ func (service *ExecutionStepService) Execute(ctx context.Context, request StepRe
 		return service.claimAndStartProviderTask(ctx, request, input, downloader)
 	}
 	if err != nil {
-		return "", fmt.Errorf("%w: load provider task: %v", ErrProviderTaskPersistence, err)
+		return StepResult{}, fmt.Errorf("%w: load provider task: %v", ErrProviderTaskPersistence, err)
 	}
 	if task.ProviderID != input.ProviderID || task.JobID != job.ID {
-		return "", fmt.Errorf("%w: durable provider task for Manifest %s", ErrExecutionIdentityMismatch, manifest.ID)
+		return StepResult{}, fmt.Errorf("%w: durable provider task for Manifest %s", ErrExecutionIdentityMismatch, manifest.ID)
 	}
 	if !task.ReferenceKnown() {
 		// A previous execution reserved the start but never durably recorded a
 		// reference. The external side effect state is unknown, so a later
 		// execution is forbidden from starting another task.
-		return "", fmt.Errorf("%w: Manifest %s holds a durable start reservation without a task reference",
+		return StepResult{}, fmt.Errorf("%w: Manifest %s holds a durable start reservation without a task reference",
 			ErrExecutionSideEffectUncertain, manifest.ID)
 	}
 	return service.pollProviderTask(ctx, task, downloader)
@@ -292,21 +308,21 @@ func (service *ExecutionStepService) claimAndStartProviderTask(
 	request StepRequest,
 	input ExecutionInput,
 	downloader contracts.DownloaderProvider,
-) (StepOutcome, error) {
+) (StepResult, error) {
 	claim, claimErr := service.tasks.ClaimProviderTask(ctx, ProviderTaskClaimRequest{
 		ManifestID: input.ManifestID, JobID: request.JobID, ProviderID: input.ProviderID,
 		Now: service.now().UTC(),
 	})
 	if claimErr != nil {
-		return "", fmt.Errorf("%w: claim provider start for Manifest %s: %w",
+		return StepResult{}, fmt.Errorf("%w: claim provider start for Manifest %s: %w",
 			ErrProviderTaskPersistence, input.ManifestID, claimErr)
 	}
 	if claim.Task.ProviderID != input.ProviderID || claim.Task.JobID != request.JobID {
-		return "", fmt.Errorf("%w: claimed provider task for Manifest %s", ErrExecutionIdentityMismatch, input.ManifestID)
+		return StepResult{}, fmt.Errorf("%w: claimed provider task for Manifest %s", ErrExecutionIdentityMismatch, input.ManifestID)
 	}
 	if !claim.ClaimedStart {
 		if !claim.Task.ReferenceKnown() {
-			return "", fmt.Errorf("%w: Manifest %s holds a durable start reservation without a task reference",
+			return StepResult{}, fmt.Errorf("%w: Manifest %s holds a durable start reservation without a task reference",
 				ErrExecutionSideEffectUncertain, input.ManifestID)
 		}
 		return service.pollProviderTask(ctx, claim.Task, downloader)
@@ -314,10 +330,10 @@ func (service *ExecutionStepService) claimAndStartProviderTask(
 
 	reference, startErr := downloader.StartDownload(ctx, input.Download)
 	if startErr != nil {
-		return "", fmt.Errorf("provider %s StartDownload: %w", input.ProviderID, startErr)
+		return StepResult{}, fmt.Errorf("provider %s StartDownload: %w", input.ProviderID, startErr)
 	}
 	if !ValidProviderTaskRef(reference.Value) {
-		return "", fmt.Errorf("%w: provider %s", ErrProviderTaskReference, input.ProviderID)
+		return StepResult{}, fmt.Errorf("%w: provider %s", ErrProviderTaskReference, input.ProviderID)
 	}
 
 	commit, commitErr := service.tasks.ClaimProviderTask(ctx, ProviderTaskClaimRequest{
@@ -329,10 +345,10 @@ func (service *ExecutionStepService) claimAndStartProviderTask(
 		// The START_RESERVED row persists, so later executions fail closed. The
 		// cause stays wrapped and readable so callers can still classify a lost
 		// fence race, while this error stays an uncertain side effect.
-		return "", fmt.Errorf("%w: Manifest %s: %w", ErrExecutionSideEffectUncertain, input.ManifestID, commitErr)
+		return StepResult{}, fmt.Errorf("%w: Manifest %s: %w", ErrExecutionSideEffectUncertain, input.ManifestID, commitErr)
 	}
 	if !commit.CommittedReference || !commit.Task.ReferenceKnown() {
-		return "", fmt.Errorf("%w: Manifest %s did not durably commit a task reference",
+		return StepResult{}, fmt.Errorf("%w: Manifest %s did not durably commit a task reference",
 			ErrExecutionSideEffectUncertain, input.ManifestID)
 	}
 	return service.pollProviderTask(ctx, commit.Task, downloader)
@@ -344,12 +360,12 @@ func (service *ExecutionStepService) pollProviderTask(
 	ctx context.Context,
 	task ProviderTask,
 	downloader contracts.DownloaderProvider,
-) (StepOutcome, error) {
+) (StepResult, error) {
 	status, err := downloader.DownloadStatus(ctx, contracts.TaskReference{Value: task.ProviderTaskRef})
 	if err != nil {
-		return "", fmt.Errorf("provider %s DownloadStatus: %w", task.ProviderID, err)
+		return StepResult{}, fmt.Errorf("provider %s DownloadStatus: %w", task.ProviderID, err)
 	}
-	return mapTaskStateToOutcome(status.State)
+	return mapTaskStatusToResult(status)
 }
 
 // mapTaskStateToOutcome maps only the externally observable provider task
@@ -367,4 +383,30 @@ func mapTaskStateToOutcome(state contracts.TaskState) (StepOutcome, error) {
 	default:
 		return "", fmt.Errorf("%w: %q", ErrProviderTaskState, state)
 	}
+}
+
+// mapTaskStatusToResult carries the provider-neutral result identity alongside the
+// outcome. Only a provider-reported success may carry a result name; every other
+// outcome deliberately reports none rather than inventing one.
+func mapTaskStatusToResult(status contracts.TaskStatus) (StepResult, error) {
+	outcome, err := mapTaskStateToOutcome(status.State)
+	if err != nil {
+		return StepResult{}, err
+	}
+	result := StepResult{Outcome: outcome}
+	if outcome != OutcomeProviderSucceeded {
+		return result, nil
+	}
+	if status.Result == nil {
+		return result, nil
+	}
+	// The provider name is carried verbatim, but a name that is not one valid direct
+	// child would be unusable as identity, so it fails closed instead of being
+	// repaired.
+	if err := contracts.ValidateDirectChildName(status.Result.Name); err != nil {
+		return StepResult{}, fmt.Errorf("%w: %w", ErrProviderResultName, err)
+	}
+	exact := status.Result.Name
+	result.ResultName = &exact
+	return result, nil
 }

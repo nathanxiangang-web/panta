@@ -153,6 +153,13 @@ func (adapter *Adapter) StartDownload(ctx context.Context, request contracts.Dow
 // DownloadStatus finds the exact info hash across a bounded number of provider
 // task pages and maps its status. Provider success is never translated into
 // Manifest READY.
+//
+// D-032: a succeeded task additionally reports the acquired top-level object name
+// when the provider exposes a usable one. A blank or absent upstream name is NOT a
+// download failure: it yields SUCCEEDED with no result name, so the acquisition
+// layer can fall back to the request intent. A present but malformed name is a
+// contract violation and fails closed. Only OfflineTask.Name crosses this boundary;
+// FileId and DirId stay provider-private.
 func (adapter *Adapter) DownloadStatus(ctx context.Context, reference contracts.TaskReference) (contracts.TaskStatus, error) {
 	if err := ctx.Err(); err != nil {
 		return contracts.TaskStatus{}, err
@@ -172,7 +179,22 @@ func (adapter *Adapter) DownloadStatus(ctx context.Context, reference contracts.
 	if err != nil {
 		return contracts.TaskStatus{}, fmt.Errorf("%w: %d", ErrTaskStateUnknown, task.Status)
 	}
-	return contracts.TaskStatus{Reference: reference, State: state}, nil
+	status := contracts.TaskStatus{Reference: reference, State: state}
+	if state != contracts.TaskStateSucceeded {
+		// Pending, running, failed, and canceled tasks carry no result identity.
+		return status, nil
+	}
+	// The download succeeded. A blank name means the provider exposed no usable
+	// locator; that is a missing identifier, not a failed acquisition.
+	if strings.TrimSpace(task.Name) == "" {
+		return status, nil
+	}
+	if err := contracts.ValidateDirectChildName(task.Name); err != nil {
+		return contracts.TaskStatus{}, fmt.Errorf("%w: succeeded task %s reported name %q: %w",
+			ErrTaskResultNameInvalid, reference.Value, task.Name, err)
+	}
+	status.Result = &contracts.DownloadResult{Name: task.Name}
+	return status, nil
 }
 
 // findTask walks provider pages until the exact info hash is found. Pagination is

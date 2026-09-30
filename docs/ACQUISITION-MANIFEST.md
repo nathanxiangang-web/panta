@@ -556,10 +556,99 @@ Do not derive this Hint from:
 A direct Panta OpenList visibility client is not part of the acquisition flow.
 
 
-
 ## Durable result locator before canonical confirmation
 
 D-032 is authoritative for the provider-neutral result locator before exact IndexCore confirmation.
+
+`target_path` remains the directory scope refreshed by IndexCore. `expected_name`
+remains optional request intent and fallback. The durable locator is a separate
+field:
+
+```text
+Manifest.expected_name   request-time expectation / fallback, never rewritten by
+                         provider execution
+Manifest.result_name     provider-stage durable top-level acquired-result locator,
+                         frozen once persisted and immutable afterwards
+```
+
+Before provider success may progress automatically to `AWAITING_VISIBILITY`, Panta
+resolves one top-level `result_name`:
+
+```text
+valid provider-observed TaskStatus.ResultName
+        >
+Manifest.ExpectedName fallback
+        ↓
+Manifest.result_name
+```
+
+The future canonical candidate is then deterministic:
+
+```text
+Join(Manifest.target_path, Manifest.result_name)
+```
+
+Panta must never replace this locator with directory guessing, a sole/newest file,
+provider FileId/DirId, provider task reference, or an arbitrary Journal event.
+
+A valid provider-observed name always wins, so it does not have to match the request
+intent: intent `A.mkv` with an observed `B.mkv` persists `result_name = B.mkv` and
+leaves `expected_name = A.mkv`. The two facts never contaminate each other. The
+intent is consulted only when the provider reports no usable name. A present but
+malformed provider name fails closed rather than silently falling back, because a
+contract violation is not an absent observation.
+
+If no valid result name can be resolved, provider success cannot progress
+automatically; the acquisition requires explicit recovery. A persisted `result_name`
+is immutable and replay-safe — a same-name replay is idempotent, a different name
+conflicts — but it is only a locator: Q5/Journal/Copy confirmation is still required
+before READY.
+
+### Durable enforcement
+
+Gate 3.9 advances the schema exactly one step, from v10 to v11. Migration
+`0011_acquisition_result_name.sql` adds the durable locator column
+`result_name text NULL` and constrains it as exactly one direct-child segment:
+nonblank, within the 512-rune limit, free of `/`, `\`, `.` and `..`. There is no
+database default, because a default would fabricate a locator for rows that never
+observed one.
+
+No migration is added for `expected_name`. The pre-existing v10 constraint already
+expresses everything the intent field requires — nonblank, bounded text with no
+separator or dot-component rule, because an intention is not a path segment.
+
+Exact spelling, case, and interior whitespace are preserved for the locator: the
+value is never trimmed, path-cleaned, or normalized, because a provider-reported name
+has to round-trip byte for byte to stay usable as identity.
+
+Promoting an intention to the locator is deliberately **not** permissive. When the
+provider reports no usable name, the intent is used as the fallback only if it also
+satisfies the direct-child rule. A permissive intent such as `a/b` is valid *intent*
+and is still accepted at request time, but it can never become `result_name`: the
+provider success fails closed as a missing identity, so the failure is a typed
+identity decision rather than a database constraint error, and neither row mutates.
+
+The locator commits inside the provider-success transaction, in the same statement
+that advances the milestone, so the locator and the state can never diverge. The
+statement fences on the previously read `result_name`, so concurrent handoffs
+proposing different names produce exactly one durable winner and every loser fails
+closed. Once persisted the locator is immutable: a same-name replay returns
+`Changed=false` and rewrites neither the name nor the timestamps, while a different
+name — including one proposed by a replay of an already-committed outcome — conflicts.
+
+Existing rows keep `result_name = NULL`. No historical row is backfilled and no guess
+is recorded, because a locator that was never observed cannot be recovered from
+timing, Journal order, or a directory listing. Enforcing that automatic progression
+carries a resolved locator belongs to the provider-success transition, not to the
+migration: the database cannot know which historical rows were legitimately observed.
+
+### The scope handoff does not carry the locator
+
+`indexcore_root_id` and `target_path` remain the only Hint inputs, and the reason is
+still `POSSIBLE_CHANGE`. Neither `result_name` nor `expected_name` is sent: the Hint
+tells IndexCore to refresh this directory scope, and the locator is not an input to
+that handoff. The scope handoff is not gated on the locator; exact canonical
+resolution using `result_name` is a later gate.
 
 `target_path` remains the destination directory scope. It is not the acquired
 resource's complete canonical path. `expected_name` remains optional acquisition

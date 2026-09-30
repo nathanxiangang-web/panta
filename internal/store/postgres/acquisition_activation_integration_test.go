@@ -250,12 +250,27 @@ func applyIntegrationMigrations(t *testing.T, ctx context.Context, pool *pgxpool
 	}
 }
 
+// activationExpectedName supplies request intent for the states that
+// require one, and nil for the earlier states that must not carry one.
+func activationExpectedName(state acquisition.State) *string {
+	switch state {
+	case acquisition.StateAwaitingVisibility, acquisition.StateAwaitingCanonical, acquisition.StateReady:
+		name := "acquired-item.bin"
+		return &name
+	default:
+		return nil
+	}
+}
 func seedActivationManifest(t *testing.T, ctx context.Context, repository *AcquisitionManifestRepository, bindingID storage.BindingID, id acquisition.ManifestID, state acquisition.State, jobID *jobs.JobID) acquisition.Manifest {
 	t.Helper()
 	now := time.Date(2020, 1, 1, 0, 0, 0, 0, time.UTC)
 	manifest := acquisition.Manifest{
 		ID: id, SourceType: "opaque", SourceRef: "opaque://source", TargetStorageBindingID: bindingID,
 		TargetPath: "/downloads/item", JobID: jobID, State: state, CreatedAt: now, UpdatedAt: now,
+		// Gate 3.9 D-032: request intent is seeded as ordinary fixture data; a Manifest
+		// frozen direct-child identity, so this seed stays a valid later-state row and
+		// the test keeps proving only the activation-state rejection.
+		ExpectedName: activationExpectedName(state),
 	}
 	if err := repository.CreateManifest(ctx, manifest); err != nil {
 		t.Fatalf("CreateManifest(%s) error = %v", id, err)
@@ -269,14 +284,17 @@ func seedCorruptActivationManifest(t *testing.T, ctx context.Context, pool *pgxp
 	manifest := acquisition.Manifest{
 		ID: id, SourceType: "opaque", SourceRef: "opaque://source", TargetStorageBindingID: bindingID,
 		TargetPath: "/downloads/item", JobID: jobID, State: state, CreatedAt: now, UpdatedAt: now,
+		// Gate 3.9 D-032: keep the row a realistic shape so this seed exercises
+		// only the corrupt link it is meant to exercise.
+		ExpectedName: activationExpectedName(state),
 	}
 	if _, err := pool.Exec(ctx, `
 INSERT INTO acquisition_manifests (
     manifest_id, source_type, source_ref, target_storage_binding_id,
-    target_path, job_id, state, created_at, updated_at
-) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $8)`,
+    target_path, expected_name, job_id, state, created_at, updated_at
+) VALUES ($1, $2, $3, $4, $5, $9, $6, $7, $8, $8)`,
 		string(id), manifest.SourceType, manifest.SourceRef, string(bindingID), manifest.TargetPath,
-		optionalID(jobID), string(state), now,
+		optionalID(jobID), string(state), now, manifest.ExpectedName,
 	); err != nil {
 		t.Fatalf("seed corrupt Manifest %s: %v", id, err)
 	}

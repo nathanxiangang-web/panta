@@ -99,11 +99,26 @@ const (
 	TaskStateCanceled  TaskState = "canceled"
 )
 
+// DownloadResult is the optional provider-neutral identity of an acquired
+// top-level object.
+//
+// It carries exactly one direct-child name. It deliberately excludes provider file
+// IDs, provider directory IDs, OpenList paths, and IndexCore resource IDs: this is
+// descriptive identity only, and it proves no canonical presence.
+type DownloadResult struct {
+	Name string
+}
+
 // TaskStatus reports provider task progress without defining Panta job state.
+//
+// Result is optional: pending, running, failed, and canceled tasks may omit it. A
+// succeeded task reports the exact top-level acquired object name when the provider
+// exposes one.
 type TaskStatus struct {
 	Reference TaskReference
 	State     TaskState
 	Message   string
+	Result    *DownloadResult
 }
 
 // ShareRequest identifies the stored object to share.

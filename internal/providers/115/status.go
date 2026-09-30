@@ -26,6 +26,7 @@ var (
 	ErrTaskReferenceAmbiguous = errors.New("115 offline task reference is ambiguous")
 	ErrTaskNotFound           = errors.New("115 offline task not found")
 	ErrTaskStateUnknown       = errors.New("115 offline task state is unknown")
+	ErrTaskResultNameInvalid  = errors.New("115 succeeded task reported a malformed result name")
 	ErrPaginationUnbounded    = errors.New("115 offline task pagination is malformed or not progressing")
 	ErrBackendStart           = errors.New("115 offline task submission failed")
 	ErrBackendList            = errors.New("115 offline task listing failed")

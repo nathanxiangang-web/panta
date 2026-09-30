@@ -356,7 +356,7 @@ func TestDownloadStatusMapsFrozenStatusCodes(t *testing.T) {
 		t.Run(string(test.want), func(t *testing.T) {
 			backend := newFakeBackend()
 			backend.listByPage[1] = OfflineTaskPage{Page: 1, PageCount: 1, Tasks: []OfflineTask{
-				{InfoHash: "target-hash", Status: test.code},
+				{InfoHash: "target-hash", Status: test.code, Name: "acquired-object.bin"},
 			}}
 			adapter := newAdapter(t, backend)
 

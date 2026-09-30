@@ -169,6 +169,10 @@ func (step *RefreshStep) Submit(ctx context.Context, request RefreshRequest) (Re
 	if manifest.State != StateAwaitingVisibility {
 		return RefreshResult{}, fmt.Errorf("%w: %s", ErrRefreshManifestState, manifest.State)
 	}
+	// D-032 keeps Gate 3.8 scoped only by indexcore_root_id + target_path: the
+	// Mutation Hint tells IndexCore to refresh this directory scope, and the
+	// acquired-result locator is not an input to that handoff. No identity guard
+	// belongs here.
 	if err := validateRefreshJob(manifest, job, plan); err != nil {
 		return RefreshResult{}, err
 	}

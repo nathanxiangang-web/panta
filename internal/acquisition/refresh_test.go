@@ -21,6 +21,9 @@ const (
 	refreshJobID      = jobs.JobID("f0000000-0000-4000-8000-000000000002")
 	refreshBindingID  = storage.BindingID("f0000000-0000-4000-8000-000000000003")
 	refreshOwner      = "acquisition-worker-a"
+	// Gate 3.9: the frozen direct-child identity every valid AWAITING_VISIBILITY
+	// Manifest now carries.
+	refreshExpectedName = "acquired-item.bin"
 )
 
 // hintPortDouble records exactly what the step submitted.
@@ -138,11 +141,13 @@ func newRefreshFixture(t *testing.T, options ...func(*storage.Binding, *acquisit
 		CreatedAt:         refreshNow, UpdatedAt: refreshNow,
 	}
 	linkedJob := refreshJobID
+	expectedName := refreshExpectedName
 	manifest := acquisition.Manifest{
 		ID: refreshManifestID, SourceType: "opaque-source", SourceRef: "opaque-ref",
 		TargetStorageBindingID: refreshBindingID, TargetPath: "/downloads/movies",
-		JobID: &linkedJob,
-		State: acquisition.StateAwaitingVisibility, CreatedAt: refreshNow, UpdatedAt: refreshNow,
+		ExpectedName: &expectedName,
+		JobID:        &linkedJob,
+		State:        acquisition.StateAwaitingVisibility, CreatedAt: refreshNow, UpdatedAt: refreshNow,
 	}
 	leaseEnd := refreshNow.Add(time.Hour)
 	startedAt := refreshNow
@@ -691,5 +696,75 @@ func TestRefreshHonoursContextCancellation(t *testing.T) {
 	cancel()
 	if _, err := fixture.step.Submit(ctx, fixture.request()); err == nil {
 		t.Fatal("Submit() succeeded, want cancellation")
+	}
+}
+
+// --- Issue #42 (D-032): Gate 3.8 is scoped only by root and target_path ---------
+
+// TestRefreshHintIgnoresAcquiredResultLocator proves the Mutation Hint does not
+// depend on the acquired-result locator. D-032 keeps Gate 3.8 scoped only by
+// indexcore_root_id + target_path: the Hint tells IndexCore to refresh this
+// directory scope, and the locator is not an input to that handoff.
+func TestRefreshHintIgnoresAcquiredResultLocator(t *testing.T) {
+	tests := []struct {
+		name       string
+		resultName *string
+	}{
+		{name: "no locator yet", resultName: nil},
+		{name: "valid locator", resultName: stringPointer("MiXeD Case & Unicode 影片.mkv")},
+		{name: "intent-only, no locator", resultName: nil},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			fixture := newRefreshFixture(t, func(_ *storage.Binding, manifest *acquisition.Manifest, _ *jobs.Job) {
+				manifest.ResultName = test.resultName
+			})
+			result, err := fixture.step.Submit(context.Background(), fixture.request())
+			if err != nil {
+				t.Fatalf("Submit() error = %v, want the Hint to be unaffected by the locator", err)
+			}
+			if !result.Changed || result.Manifest.State != acquisition.StateAwaitingCanonical {
+				t.Fatalf("result = %+v", result)
+			}
+			calls, requests := fixture.port.snapshot()
+			if calls != 1 {
+				t.Fatalf("Hint calls = %d, want exactly 1", calls)
+			}
+			hint := requests[0]
+			if hint.RootID != "root-115-a" {
+				t.Fatalf("root_id = %q, want the binding indexcore_root_id", hint.RootID)
+			}
+			if hint.ScopeKey != "/downloads/movies" {
+				t.Fatalf("scope_key = %q, want Manifest.target_path", hint.ScopeKey)
+			}
+			if hint.Reason != acquisition.MutationHintPossibleChange {
+				t.Fatalf("reason = %q, want POSSIBLE_CHANGE", hint.Reason)
+			}
+			// Neither the locator nor the intent may travel in the Hint.
+			for _, leaked := range []string{"MiXeD", "影片", "acquired"} {
+				if strings.Contains(hint.ScopeKey, leaked) || strings.Contains(hint.RootID, leaked) {
+					t.Fatalf("%q leaked into the Hint", leaked)
+				}
+			}
+		})
+	}
+}
+
+// TestRefreshDoesNotRewriteExpectedNameOrResultName proves the Gate 3.8 handoff
+// leaves both identity fields exactly as they were.
+func TestRefreshDoesNotRewriteExpectedNameOrResultName(t *testing.T) {
+	fixture := newRefreshFixture(t, func(_ *storage.Binding, manifest *acquisition.Manifest, _ *jobs.Job) {
+		manifest.ExpectedName = stringPointer("request-intent.mkv")
+		manifest.ResultName = stringPointer("observed-result.mkv")
+	})
+	if _, err := fixture.step.Submit(context.Background(), fixture.request()); err != nil {
+		t.Fatalf("Submit() error = %v", err)
+	}
+	manifest, _, _ := fixture.store.snapshots()
+	if manifest.ExpectedName == nil || *manifest.ExpectedName != "request-intent.mkv" {
+		t.Fatalf("expected_name = %v, want the request intent untouched", manifest.ExpectedName)
+	}
+	if manifest.ResultName == nil || *manifest.ResultName != "observed-result.mkv" {
+		t.Fatalf("result_name = %v, want the locator untouched", manifest.ResultName)
 	}
 }

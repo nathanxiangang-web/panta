@@ -29,6 +29,10 @@ func providerOutcomeSuccessRequest(fixture providerOutcomeFixture, generation in
 	}
 	retryAt := now
 	request.RetryAt = &retryAt
+	// D-032: a provider success supplies the observed acquired-result locator.
+	// the Manifest has not frozen one yet.
+	observedName := "acquired-item.bin"
+	request.ProviderResultName = &observedName
 	return request
 }
 

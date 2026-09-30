@@ -141,8 +141,18 @@ func providerOutcomeRequest(fixture providerOutcomeFixture, outcome acquisition.
 		message := "provider stage failed"
 		request.ErrorMessage = &message
 	}
+	if outcome == acquisition.ProviderOutcomeSucceeded {
+		// D-032: a provider success supplies the observed result locator.
+		resultName := providerOutcomeResultName
+		request.ProviderResultName = &resultName
+	}
 	return request
 }
+
+// providerOutcomeResultName is the direct-child identity the provider reports in
+// these tests. It is deliberately not path-clean or space-normalized, so an
+// accidental trim or clean in the handoff would surface as a mismatch.
+const providerOutcomeResultName = "acquired-item.bin"
 
 func newOutcomeServiceFor(t *testing.T, repository *ProviderOutcomeRepository) *acquisition.ProviderOutcomeService {
 	t.Helper()
