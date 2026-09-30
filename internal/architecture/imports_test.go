@@ -41,8 +41,17 @@ func TestGateZeroDomainImportBoundaries(t *testing.T) {
 			},
 		},
 		{
+			// The IndexCore integration owns concrete IndexCore HTTP clients. It may use
+			// the standard library and its own port contracts and nothing else in Panta,
+			// and it must never import IndexCore's internal Go packages.
 			packagePath: "github.com/nathanxiangang-web/panta/internal/integrations/indexcore",
-			forbidden:   []string{"github.com/jackc/pgx", "database/sql", "/providers/115"},
+			forbidden: []string{
+				"github.com/jackc/pgx", "database/sql",
+				"/internal/acquisition", "/internal/jobs", "/internal/store",
+				"/internal/providers", "/providers/115",
+				"/internal/search", "/internal/agent", "/internal/auth",
+				"github.com/nathanxiangang-web/index-core",
+			},
 		},
 		{
 			packagePath: "github.com/nathanxiangang-web/panta/internal/storage",
