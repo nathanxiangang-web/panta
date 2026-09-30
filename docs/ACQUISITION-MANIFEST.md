@@ -554,3 +554,28 @@ Do not derive this Hint from:
 - provider task reference.
 
 A direct Panta OpenList visibility client is not part of the acquisition flow.
+
+
+## Deterministic acquired-result identity
+
+D-031 refines the meaning of the existing Manifest fields before canonical confirmation:
+
+```text
+target_path
+    = target directory / IndexCore scoped-refresh directory
+
+expected_name
+    = exact direct-child name expected to appear under target_path
+```
+
+`expected_name` may be NULL at initial creation, because some sources do not reveal the provider's final top-level object name before execution.
+
+Before a newly successful provider acquisition may advance to `AWAITING_VISIBILITY`, the name must be frozen:
+- a predeclared expected_name is immutable;
+- a provider-reported result name must match a predeclared value exactly;
+- when expected_name is NULL, a valid provider result name may fill it atomically with the provider-success handoff;
+- missing or conflicting identity fails closed.
+
+The identity is provider-neutral. For 115, only the successful offline task's `Name` may become the result name. Provider `FileId` / `DirId` remain private to the adapter and are never used as IndexCore identity.
+
+This identity does not prove presence. Later canonical confirmation still requires IndexCore evidence.
