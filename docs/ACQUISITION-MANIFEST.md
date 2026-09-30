@@ -245,9 +245,12 @@ FAILED            -> PROVIDER_FAILED
 CANCELED          -> PROVIDER_CANCELED
 ```
 
-Provider success is not Manifest `READY`. `READY` still requires OpenList
-visibility, canonical confirmation, and Copy mutation, none of which Gate 3.4
-performs. An empty or invalid returned task reference and an unknown provider task
+Provider success is not Manifest `READY`. After provider success, Panta hands
+the affected root/scope to the **IndexCore-owned observation pipeline** through a
+trusted Mutation Hint. IndexCore performs the OpenList-backed scoped verification.
+`READY` still requires canonical IndexCore Query/Journal evidence plus the
+corresponding Copy projection/association. Panta does not directly verify OpenList
+during acquisition. An empty or invalid returned task reference and an unknown provider task
 state both fail closed.
 
 ## Uncertain external side effects
@@ -516,8 +519,38 @@ fencing meaning that must stay monotonic.
 
 ## Deferred capabilities
 
-Source Resolver/provider syntax normalization, the Job worker loop, OpenList
-visibility verification, Mutation Hint/scoped refresh, the AWAITING_CANONICAL
-transition, canonical READY confirmation, auth/quota, and API/UI are separately
-authorized later work. A real secret backend, the 115 ShareProvider, and
+Source Resolver/provider syntax normalization, the Job worker loop, trusted
+IndexCore Mutation Hint / observation handoff, the AWAITING_CANONICAL transition,
+canonical READY confirmation, auth/quota, and API/UI are separately authorized
+later work. Direct Panta -> OpenList acquisition verification is not a planned
+stage; D-029 keeps OpenList observation owned by IndexCore. A real secret backend, the 115 ShareProvider, and
 115-specific retry policy are also deferred.
+
+
+## Acquisition observation ownership correction
+
+D-029 is authoritative for post-provider observation:
+
+```text
+provider succeeds
+    ↓
+Manifest AWAITING_VISIBILITY
+    ↓
+Panta -> IndexCore trusted Mutation Hint
+    ↓
+IndexCore-owned OpenList scoped verification
+    ↓
+IndexCore Canonical + Journal
+    ↓
+Panta confirmation / Copy projection
+```
+
+The Manifest's `target_path` is used as the IndexCore mutation-hint
+`scope_key` together with the binding's `indexcore_root_id`.
+
+Do not derive this Hint from:
+- `provider_scope`;
+- `openlist_mount_path`;
+- provider task reference.
+
+A direct Panta OpenList visibility client is not part of the acquisition flow.
