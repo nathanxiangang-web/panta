@@ -940,3 +940,21 @@ Rules:
 - no new worker queue, direct OpenList verification, second Copy writer, new Job type, DB migration, or autonomous agent scheduler.
 
 Gate 3.14 builds the opt-in lifecycle/service and safe process configuration seam; **production PostgreSQL/IndexCore/115 credential wiring and deployment are not yet authorized**. Enabling an unwired process must fail loudly. This is distinct from an operational E2E deployment.
+
+## D-038 — Explicit fail-closed production runtime graph and injected secrets
+
+**Status:** Accepted
+
+Gate 3.14 accepted an opt-in serial acquisition worker but did not wire a live process. Gate 3.15 may compose **one** graph from the accepted PostgreSQL Job/Manifest/ProviderTask/Outcome/Refresh/Canonical stores, IndexCore Q5/Q8 read and trusted Mutation Hint clients, Catalog Journal Projector, exact provider-session registry, RunOnce and worker.
+
+Rules:
+- default process remains side-effect-free; enabled startup requires all mandatory dependencies and Panta schema v12 before claiming any Job;
+- PostgreSQL product DB is distinct from IndexCore DB; no direct IndexCore DB/OpenList acquisition verification;
+- Q5/Q8 read and trusted Mutation Hint have separate validated clients and trust boundaries. Hint accepted does not create READY;
+- exact ProviderID + ConnectionID + CredentialRef session resolution, external secret injection, no persisted/logged plaintext cookies or Hint tokens;
+- unknown/missing provider registration, credentials, unsafe Hint config, incomplete schema or failed required composition is a startup error, never a mock fallback;
+- D-017 Journal Projector exclusively owns Copy creation; D-033 Q5 + exact PRESENT Copy exclusively authorizes READY;
+- preserve D-034/035/036/037 lease, linked recovery, one-claim stage and one-worker semantics; shutdown cancels work and closes owned resources;
+- controlled PostgreSQL + HTTP-fake integration is mandatory and may run in CI. No live 115 account access or production deployment is authorized without a later separate decision.
+
+Scope is bounded to process/runtime composition and controlled evidence; not Source Resolver, API/UI, real account secrets provisioning, deployment images or distributed scheduling.
