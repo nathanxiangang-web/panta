@@ -87,19 +87,19 @@ func ProviderOutcomeTransitionFor(outcome ProviderOutcome) (ProviderOutcomeTrans
 
 // ProviderOutcomeRequest commits one fenced provider-stage outcome.
 //
-// Owner and ExpectedAttempt fence the currently RUNNING Job; lease validity is
+// Owner and ExpectedClaim fence the currently RUNNING Job; lease validity is
 // authorized by database time, consistent with the accepted Job Engine. RetryAt is
 // required for the non-terminal handoffs and ErrorMessage for the outcomes that must
 // record a cause.
 type ProviderOutcomeRequest struct {
-	ManifestID      ManifestID
-	JobID           jobs.JobID
-	Owner           string
-	ExpectedAttempt int
-	Outcome         ProviderOutcome
-	Now             time.Time
-	RetryAt         *time.Time
-	ErrorMessage    *string
+	ManifestID    ManifestID
+	JobID         jobs.JobID
+	Owner         string
+	ExpectedClaim int
+	Outcome       ProviderOutcome
+	Now           time.Time
+	RetryAt       *time.Time
+	ErrorMessage  *string
 }
 
 // ProviderOutcomeResult is the durable state after a handoff.
@@ -115,16 +115,16 @@ type ProviderOutcomeResult struct {
 // store must commit the Manifest milestone and the Job state together or not at
 // all.
 type ProviderOutcomePlan struct {
-	ManifestID      ManifestID
-	JobID           jobs.JobID
-	Owner           string
-	ExpectedAttempt int
-	Outcome         ProviderOutcome
-	ManifestState   State
-	JobState        jobs.State
-	Now             time.Time
-	RetryAt         *time.Time
-	ErrorMessage    *string
+	ManifestID    ManifestID
+	JobID         jobs.JobID
+	Owner         string
+	ExpectedClaim int
+	Outcome       ProviderOutcome
+	ManifestState State
+	JobState      jobs.State
+	Now           time.Time
+	RetryAt       *time.Time
+	ErrorMessage  *string
 }
 
 // ProviderOutcomeStore commits the plan atomically.
@@ -163,7 +163,7 @@ func BuildProviderOutcomePlan(request ProviderOutcomeRequest) (ProviderOutcomeTr
 		return ProviderOutcomeTransition{}, ProviderOutcomePlan{}, err
 	}
 	if request.ManifestID == "" || request.JobID == "" || strings.TrimSpace(request.Owner) == "" ||
-		request.ExpectedAttempt < 1 || request.Now.IsZero() {
+		request.ExpectedClaim < 1 || request.Now.IsZero() {
 		return ProviderOutcomeTransition{}, ProviderOutcomePlan{}, ErrInvalidProviderOutcome
 	}
 	if transition.RequiresRetryAt {
@@ -179,16 +179,16 @@ func BuildProviderOutcomePlan(request ProviderOutcomeRequest) (ProviderOutcomeTr
 		}
 	}
 	return transition, ProviderOutcomePlan{
-		ManifestID:      request.ManifestID,
-		JobID:           request.JobID,
-		Owner:           request.Owner,
-		ExpectedAttempt: request.ExpectedAttempt,
-		Outcome:         request.Outcome,
-		ManifestState:   transition.ManifestState,
-		JobState:        transition.JobState,
-		Now:             request.Now.UTC(),
-		RetryAt:         cloneTime(request.RetryAt),
-		ErrorMessage:    cloneTrimmed(request.ErrorMessage),
+		ManifestID:    request.ManifestID,
+		JobID:         request.JobID,
+		Owner:         request.Owner,
+		ExpectedClaim: request.ExpectedClaim,
+		Outcome:       request.Outcome,
+		ManifestState: transition.ManifestState,
+		JobState:      transition.JobState,
+		Now:           request.Now.UTC(),
+		RetryAt:       cloneTime(request.RetryAt),
+		ErrorMessage:  cloneTrimmed(request.ErrorMessage),
 	}, nil
 }
 

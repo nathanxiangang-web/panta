@@ -42,8 +42,20 @@ type Job struct {
 	Payload        json.RawMessage
 	State          State
 	IdempotencyKey *string
-	AttemptCount   int
-	MaxAttempts    int
+
+	// ClaimAttempts is the monotonically increasing claim generation. Every
+	// successful claim increments it, it is never bounded, and it is the fencing
+	// token that makes an earlier claimant's lease stale. Stale workers are
+	// rejected by comparing this value, so a Job may be claimed any number of
+	// times as it moves through provider, visibility, and later stages.
+	ClaimAttempts int
+
+	// FailureCount is the consumed failure/retry budget. Only a real failure
+	// retry increments it, and MaxAttempts bounds it. Stage transitions such as
+	// provider polling or a provider success must never consume it.
+	FailureCount int
+	MaxAttempts  int
+
 	NextAttemptAt  *time.Time
 	LeaseOwner     *string
 	LeaseExpiresAt *time.Time
@@ -68,11 +80,15 @@ type ClaimRequest struct {
 	LeaseDuration time.Duration
 }
 
+// LeaseRequest fences one active-lease mutation.
+//
+// ExpectedClaim is the claim generation the caller believes it holds. It must be
+// the value returned by the claim that granted the lease, never a failure count.
 type LeaseRequest struct {
-	ID              JobID
-	Owner           string
-	ExpectedAttempt int
-	Now             time.Time
+	ID            JobID
+	Owner         string
+	ExpectedClaim int
+	Now           time.Time
 }
 
 type RenewLeaseRequest struct {
@@ -103,6 +119,10 @@ type RecoveryRequest struct {
 // Repository persists the minimum durable job state machine. Implementations
 // must make ClaimNext atomic and enforce owner plus claim-generation fencing on
 // every active-lease mutation. Lease expiry authorization uses database time.
+//
+// ClaimNext must increment the claim generation on every claim and must never
+// refuse a claim because the failure budget is exhausted: RETRY_WAIT rows are
+// always schedulable. Only RetryAt consumes the failure budget.
 type Repository interface {
 	Create(context.Context, CreateRequest) (Job, error)
 	Get(context.Context, JobID) (Job, error)

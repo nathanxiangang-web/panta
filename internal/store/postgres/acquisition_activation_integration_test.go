@@ -47,7 +47,7 @@ func TestPostgresAcquisitionActivationContract(t *testing.T) {
 	if !first.Changed || first.Manifest.State != acquisition.StateActive || first.Manifest.JobID == nil ||
 		*first.Manifest.JobID != request.JobID || first.Job.ID != request.JobID || first.Job.State != jobs.StateQueued ||
 		first.Job.Type != acquisition.JobTypeAcquisition || first.Job.MaxAttempts != request.MaxAttempts ||
-		first.Job.AttemptCount != 0 || !first.Manifest.UpdatedAt.After(manifest.UpdatedAt) {
+		first.Job.ClaimAttempts != 0 || !first.Manifest.UpdatedAt.After(manifest.UpdatedAt) {
 		t.Fatalf("first activation = %#v", first)
 	}
 	assertAcquisitionJobContract(t, first.Job, manifest.ID)

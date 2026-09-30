@@ -28,6 +28,9 @@ type providerOutcomeFixture struct {
 
 // seedProviderOutcomeJob inserts one ACTIVE Manifest linked to a RUNNING
 // ACQUISITION Job with an unexpired lease, matching what a fenced worker holds.
+//
+// attempt is the claim generation the seeded lease holds, not a failure count: the
+// failure budget is seeded at the default 5 and is not what fences this worker.
 func seedProviderOutcomeJob(
 	t *testing.T,
 	ctx context.Context,
@@ -39,6 +42,23 @@ func seedProviderOutcomeJob(
 	leaseEnd time.Time,
 ) providerOutcomeFixture {
 	t.Helper()
+	return seedProviderOutcomeJobWithBudget(t, ctx, pool, bindingID, suffix, owner, attempt, 5, leaseEnd)
+}
+
+// seedProviderOutcomeJobWithBudget is the same fixture with an explicit failure
+// budget, so tests can prove stage transitions never consume it.
+func seedProviderOutcomeJobWithBudget(
+	t *testing.T,
+	ctx context.Context,
+	pool *pgxpool.Pool,
+	bindingID storage.BindingID,
+	suffix string,
+	owner string,
+	claimGeneration int,
+	maxAttempts int,
+	leaseEnd time.Time,
+) providerOutcomeFixture {
+	t.Helper()
 	now := time.Date(2026, 9, 30, 9, 0, 0, 0, time.UTC)
 	manifestID := acquisition.ManifestID("37000000-0000-4000-8000-0000000000" + suffix)
 	jobID := jobs.JobID("37000000-0000-4000-8000-0000000001" + suffix)
@@ -46,12 +66,12 @@ func seedProviderOutcomeJob(
 	if _, err := pool.Exec(ctx, `
 INSERT INTO jobs (
     job_id, job_type, payload, state, idempotency_key,
-    attempt_count, max_attempts, lease_owner, lease_expires_at,
+    claim_attempts, attempt_count, max_attempts, lease_owner, lease_expires_at,
     created_at, updated_at, started_at
-) VALUES ($1, $2, $3, 'RUNNING', $4, $5, 5, $6, $7, $8, $8, $8)`,
+) VALUES ($1, $2, $3, 'RUNNING', $4, $5, 0, $6, $7, $8, $9, $9, $9)`,
 		string(jobID), acquisition.JobTypeAcquisition,
 		[]byte(fmt.Sprintf(`{"manifest_id":"%s","schema_version":1}`, manifestID)),
-		key, attempt, owner, leaseEnd, now,
+		key, claimGeneration, maxAttempts, owner, leaseEnd, now,
 	); err != nil {
 		t.Fatalf("seed RUNNING ACQUISITION job: %v", err)
 	}
@@ -65,7 +85,7 @@ INSERT INTO acquisition_manifests (
 		t.Fatalf("seed ACTIVE Manifest: %v", err)
 	}
 	return providerOutcomeFixture{
-		manifestID: manifestID, jobID: jobID, owner: owner, attempt: attempt, leaseEnd: leaseEnd,
+		manifestID: manifestID, jobID: jobID, owner: owner, attempt: claimGeneration, leaseEnd: leaseEnd,
 	}
 }
 
@@ -102,12 +122,12 @@ func newProviderOutcomeIntegrationFixture(t *testing.T) (context.Context, *pgxpo
 
 func providerOutcomeRequest(fixture providerOutcomeFixture, outcome acquisition.ProviderOutcome, now time.Time) acquisition.ProviderOutcomeRequest {
 	request := acquisition.ProviderOutcomeRequest{
-		ManifestID:      fixture.manifestID,
-		JobID:           fixture.jobID,
-		Owner:           fixture.owner,
-		ExpectedAttempt: fixture.attempt,
-		Outcome:         outcome,
-		Now:             now,
+		ManifestID:    fixture.manifestID,
+		JobID:         fixture.jobID,
+		Owner:         fixture.owner,
+		ExpectedClaim: fixture.attempt,
+		Outcome:       outcome,
+		Now:           now,
 	}
 	transition, err := acquisition.ProviderOutcomeTransitionFor(outcome)
 	if err != nil {
@@ -215,8 +235,9 @@ func TestPostgresProviderOutcomeTransitionsAtomically(t *testing.T) {
 				t.Fatalf("non-terminal Job has finished_at = %v", durableJob.FinishedAt)
 			}
 			// attempt_count is preserved, never incremented here.
-			if durableJob.AttemptCount != fixture.attempt {
-				t.Fatalf("attempt_count = %d, want %d", durableJob.AttemptCount, fixture.attempt)
+			if durableJob.ClaimAttempts != fixture.attempt {
+				t.Fatalf("claim generation = %d, want %d (a handoff must not change it)",
+					durableJob.ClaimAttempts, fixture.attempt)
 			}
 		})
 	}
@@ -289,10 +310,10 @@ func TestPostgresProviderOutcomeFencingAndIdentityFailures(t *testing.T) {
 		return seedProviderOutcomeJob(t, ctx, pool, bindingID, suffixes[index], "worker-a", 2, leaseEnd)
 	}
 
-	t.Run("stale ExpectedAttempt", func(t *testing.T) {
+	t.Run("stale claim generation", func(t *testing.T) {
 		fixture := next()
 		request := providerOutcomeRequest(fixture, acquisition.ProviderOutcomeSucceeded, now)
-		request.ExpectedAttempt = 1
+		request.ExpectedClaim = 1
 		if _, err := service.Commit(ctx, request); !errors.Is(err, acquisition.ErrProviderOutcomeFence) {
 			t.Fatalf("error = %v, want ErrProviderOutcomeFence", err)
 		}

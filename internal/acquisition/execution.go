@@ -28,13 +28,13 @@ var (
 )
 
 // StepRequest proves that this execution runs on behalf of one fenced RUNNING
-// ACQUISITION Job. Owner and Attempt come from the Job Engine lease context and
+// ACQUISITION Job. Owner and ClaimAttempt come from the Job Engine lease context and
 // are compared against durable Job state, so a foreign, stale, or unleased actor
 // fails closed before any provider task is started or polled.
 type StepRequest struct {
-	JobID   jobs.JobID
-	Owner   string
-	Attempt int
+	JobID        jobs.JobID
+	Owner        string
+	ClaimAttempt int
 }
 
 // StepOutcome is the provider-neutral result of one bounded execution step. It
@@ -137,7 +137,7 @@ func (service *ExecutionStepService) Execute(ctx context.Context, request StepRe
 	if err := ctx.Err(); err != nil {
 		return "", err
 	}
-	if request.JobID == "" || request.Owner == "" || request.Attempt < 1 {
+	if request.JobID == "" || request.Owner == "" || request.ClaimAttempt < 1 {
 		return "", ErrInvalidExecutionRequest
 	}
 
@@ -263,7 +263,7 @@ func linkedManifestID(job jobs.Job) (ManifestID, error) {
 }
 
 // validateFencedLease proves that the durable Job is RUNNING, unexpired, owned by
-// the requesting lease holder, and still on the requesting attempt.
+// the requesting lease holder, and still on the requesting claim generation.
 func (service *ExecutionStepService) validateFencedLease(job jobs.Job, request StepRequest) error {
 	mismatch := func(reason string) error {
 		return fmt.Errorf("%w: %s", ErrExecutionJobMismatch, reason)
@@ -277,8 +277,8 @@ func (service *ExecutionStepService) validateFencedLease(job jobs.Job, request S
 	if job.LeaseExpiresAt == nil || !job.LeaseExpiresAt.After(service.now().UTC()) {
 		return mismatch("Job " + string(job.ID) + " lease has expired")
 	}
-	if job.AttemptCount != request.Attempt {
-		return mismatch(fmt.Sprintf("Job %s attempt %d does not match %d", job.ID, job.AttemptCount, request.Attempt))
+	if job.ClaimAttempts != request.ClaimAttempt {
+		return mismatch(fmt.Sprintf("Job %s claim generation %d does not match %d", job.ID, job.ClaimAttempts, request.ClaimAttempt))
 	}
 	return nil
 }

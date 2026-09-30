@@ -373,14 +373,14 @@ func executionJob() jobs.Job {
 	leaseExpiry := executionNow.Add(time.Hour)
 	return jobs.Job{
 		ID: executionJobID, Type: acquisition.JobTypeAcquisition, Payload: executionPayload(executionManifestID),
-		State: jobs.StateRunning, IdempotencyKey: &key, AttemptCount: executionAttempt, MaxAttempts: 5,
+		State: jobs.StateRunning, IdempotencyKey: &key, ClaimAttempts: executionAttempt, FailureCount: 0, MaxAttempts: 5,
 		LeaseOwner: stringPointer(executionOwner), LeaseExpiresAt: &leaseExpiry,
 		CreatedAt: executionNow, UpdatedAt: executionNow,
 	}
 }
 
 func executionRequest() acquisition.StepRequest {
-	return acquisition.StepRequest{JobID: executionJobID, Owner: executionOwner, Attempt: executionAttempt}
+	return acquisition.StepRequest{JobID: executionJobID, Owner: executionOwner, ClaimAttempt: executionAttempt}
 }
 
 type executionFixture struct {
@@ -579,7 +579,7 @@ func TestExecutionStepRequiresFencedRunningLease(t *testing.T) {
 		}},
 		{name: "stale attempt", mutate: func(fixture *executionFixture) *acquisition.StepRequest {
 			request := fixture.request
-			request.Attempt = executionAttempt + 1
+			request.ClaimAttempt = executionAttempt + 1
 			return &request
 		}},
 		{name: "expired lease", mutate: func(fixture *executionFixture) *acquisition.StepRequest {
@@ -602,7 +602,7 @@ func TestExecutionStepRequiresFencedRunningLease(t *testing.T) {
 		}},
 		{name: "zero attempt", mutate: func(fixture *executionFixture) *acquisition.StepRequest {
 			request := fixture.request
-			request.Attempt = 0
+			request.ClaimAttempt = 0
 			return &request
 		}},
 	}

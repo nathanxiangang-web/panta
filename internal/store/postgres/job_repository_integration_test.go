@@ -20,7 +20,7 @@ func TestPostgresJobCreateGetAndIdempotency(t *testing.T) {
 		ID: "10000000-0000-4000-8000-000000000001", Type: "RESOURCE_ACQUIRE",
 		Payload: json.RawMessage(`{"source":"opaque"}`), IdempotencyKey: &key, MaxAttempts: 3,
 	})
-	if created.State != jobs.StateQueued || created.AttemptCount != 0 || created.IdempotencyKey == nil || *created.IdempotencyKey != key {
+	if created.State != jobs.StateQueued || created.FailureCount != 0 || created.ClaimAttempts != 0 || created.IdempotencyKey == nil || *created.IdempotencyKey != key {
 		t.Fatalf("created job = %#v", created)
 	}
 
@@ -53,11 +53,11 @@ func TestPostgresJobClaimLeaseAndCompletion(t *testing.T) {
 	if err != nil {
 		t.Fatalf("ClaimNext() error = %v", err)
 	}
-	if claimed.ID != job.ID || claimed.State != jobs.StateRunning || claimed.AttemptCount != 1 || claimed.LeaseOwner == nil || *claimed.LeaseOwner != "worker-a" || claimed.StartedAt == nil {
+	if claimed.ID != job.ID || claimed.State != jobs.StateRunning || claimed.ClaimAttempts != 1 || claimed.LeaseOwner == nil || *claimed.LeaseOwner != "worker-a" || claimed.StartedAt == nil {
 		t.Fatalf("claimed job = %#v", claimed)
 	}
 
-	wrongLease := jobs.LeaseRequest{ID: job.ID, Owner: "worker-b", ExpectedAttempt: claimed.AttemptCount, Now: now.Add(10 * time.Second)}
+	wrongLease := jobs.LeaseRequest{ID: job.ID, Owner: "worker-b", ExpectedClaim: claimed.ClaimAttempts, Now: now.Add(10 * time.Second)}
 	if _, err := repository.RenewLease(ctx, jobs.RenewLeaseRequest{LeaseRequest: wrongLease, LeaseDuration: time.Minute}); !errors.Is(err, jobs.ErrLeaseConflict) {
 		t.Fatalf("wrong-owner RenewLease() error = %v", err)
 	}
@@ -69,13 +69,13 @@ func TestPostgresJobClaimLeaseAndCompletion(t *testing.T) {
 	}
 
 	renewed, err := repository.RenewLease(ctx, jobs.RenewLeaseRequest{
-		LeaseRequest:  jobs.LeaseRequest{ID: job.ID, Owner: "worker-a", ExpectedAttempt: claimed.AttemptCount, Now: now.Add(20 * time.Second)},
+		LeaseRequest:  jobs.LeaseRequest{ID: job.ID, Owner: "worker-a", ExpectedClaim: claimed.ClaimAttempts, Now: now.Add(20 * time.Second)},
 		LeaseDuration: 2 * time.Minute,
 	})
 	if err != nil || renewed.LeaseExpiresAt == nil || claimed.LeaseExpiresAt == nil || !renewed.LeaseExpiresAt.After(*claimed.LeaseExpiresAt) {
 		t.Fatalf("RenewLease() = %#v, %v", renewed, err)
 	}
-	succeeded, err := repository.Succeed(ctx, jobs.LeaseRequest{ID: job.ID, Owner: "worker-a", ExpectedAttempt: claimed.AttemptCount, Now: now.Add(30 * time.Second)})
+	succeeded, err := repository.Succeed(ctx, jobs.LeaseRequest{ID: job.ID, Owner: "worker-a", ExpectedClaim: claimed.ClaimAttempts, Now: now.Add(30 * time.Second)})
 	if err != nil || succeeded.State != jobs.StateSucceeded || succeeded.LeaseOwner != nil || succeeded.FinishedAt == nil {
 		t.Fatalf("Succeed() = %#v, %v", succeeded, err)
 	}
@@ -98,7 +98,7 @@ func TestPostgresJobRetryTimingAndMaxAttempts(t *testing.T) {
 	retryAt := now.Add(time.Hour)
 	waiting, err := repository.RetryAt(ctx, jobs.RetryRequest{
 		FailureRequest: jobs.FailureRequest{
-			LeaseRequest: jobs.LeaseRequest{ID: job.ID, Owner: "worker-a", ExpectedAttempt: first.AttemptCount, Now: now.Add(10 * time.Second)},
+			LeaseRequest: jobs.LeaseRequest{ID: job.ID, Owner: "worker-a", ExpectedClaim: first.ClaimAttempts, Now: now.Add(10 * time.Second)},
 			Error:        "temporary failure",
 		},
 		RetryAt: retryAt,
@@ -110,12 +110,12 @@ func TestPostgresJobRetryTimingAndMaxAttempts(t *testing.T) {
 		t.Fatalf("early ClaimNext() error = %v", err)
 	}
 	second, err := repository.ClaimNext(ctx, jobs.ClaimRequest{Owner: "worker-b", Now: retryAt, LeaseDuration: time.Minute})
-	if err != nil || second.AttemptCount != 2 || second.State != jobs.StateRunning {
+	if err != nil || second.ClaimAttempts != 2 || second.State != jobs.StateRunning {
 		t.Fatalf("due ClaimNext() = %#v, %v", second, err)
 	}
 	exhausted, err := repository.RetryAt(ctx, jobs.RetryRequest{
 		FailureRequest: jobs.FailureRequest{
-			LeaseRequest: jobs.LeaseRequest{ID: job.ID, Owner: "worker-b", ExpectedAttempt: second.AttemptCount, Now: retryAt.Add(10 * time.Second)},
+			LeaseRequest: jobs.LeaseRequest{ID: job.ID, Owner: "worker-b", ExpectedClaim: second.ClaimAttempts, Now: retryAt.Add(10 * time.Second)},
 			Error:        "still failing",
 		},
 		RetryAt: retryAt.Add(2 * time.Hour),
@@ -132,7 +132,7 @@ func TestPostgresJobRetryTimingAndMaxAttempts(t *testing.T) {
 		t.Fatalf("failure ClaimNext() = %#v, %v", claimed, err)
 	}
 	failed, err := repository.Fail(ctx, jobs.FailureRequest{
-		LeaseRequest: jobs.LeaseRequest{ID: terminalFailure.ID, Owner: "worker-c", ExpectedAttempt: claimed.AttemptCount, Now: retryAt.Add(3*time.Hour + 10*time.Second)},
+		LeaseRequest: jobs.LeaseRequest{ID: terminalFailure.ID, Owner: "worker-c", ExpectedClaim: claimed.ClaimAttempts, Now: retryAt.Add(3*time.Hour + 10*time.Second)},
 		Error:        "terminal failure",
 	})
 	if err != nil || failed.State != jobs.StateFailed || failed.LastError == nil {
@@ -161,7 +161,7 @@ func TestPostgresJobCancellationRules(t *testing.T) {
 	}
 	waiting, err := repository.RetryAt(ctx, jobs.RetryRequest{
 		FailureRequest: jobs.FailureRequest{
-			LeaseRequest: jobs.LeaseRequest{ID: retryJob.ID, Owner: "worker-a", ExpectedAttempt: claimed.AttemptCount, Now: now.Add(10 * time.Second)},
+			LeaseRequest: jobs.LeaseRequest{ID: retryJob.ID, Owner: "worker-a", ExpectedClaim: claimed.ClaimAttempts, Now: now.Add(10 * time.Second)},
 			Error:        "retry later",
 		},
 		RetryAt: now.Add(time.Hour),
@@ -200,7 +200,7 @@ func TestPostgresJobLeaseGenerationFencesSameOwner(t *testing.T) {
 	retryAt := now.Add(time.Minute)
 	if _, err := repository.RetryAt(ctx, jobs.RetryRequest{
 		FailureRequest: jobs.FailureRequest{
-			LeaseRequest: jobs.LeaseRequest{ID: job.ID, Owner: "worker-a", ExpectedAttempt: first.AttemptCount, Now: now.Add(time.Second)},
+			LeaseRequest: jobs.LeaseRequest{ID: job.ID, Owner: "worker-a", ExpectedClaim: first.ClaimAttempts, Now: now.Add(time.Second)},
 			Error:        "retry",
 		},
 		RetryAt: retryAt,
@@ -208,11 +208,11 @@ func TestPostgresJobLeaseGenerationFencesSameOwner(t *testing.T) {
 		t.Fatalf("RetryAt(attempt 1) error = %v", err)
 	}
 	second, err := repository.ClaimNext(ctx, jobs.ClaimRequest{Owner: "worker-a", Now: retryAt, LeaseDuration: time.Minute})
-	if err != nil || second.AttemptCount != first.AttemptCount+1 {
+	if err != nil || second.ClaimAttempts != first.ClaimAttempts+1 {
 		t.Fatalf("second ClaimNext() = %#v, %v", second, err)
 	}
 
-	stale := jobs.LeaseRequest{ID: job.ID, Owner: "worker-a", ExpectedAttempt: first.AttemptCount, Now: retryAt.Add(time.Second)}
+	stale := jobs.LeaseRequest{ID: job.ID, Owner: "worker-a", ExpectedClaim: first.ClaimAttempts, Now: retryAt.Add(time.Second)}
 	if _, err := repository.RenewLease(ctx, jobs.RenewLeaseRequest{LeaseRequest: stale, LeaseDuration: time.Minute}); !errors.Is(err, jobs.ErrLeaseConflict) {
 		t.Fatalf("stale-generation RenewLease() error = %v", err)
 	}
@@ -230,11 +230,11 @@ func TestPostgresJobLeaseGenerationFencesSameOwner(t *testing.T) {
 	}
 
 	unchanged, err := repository.Get(ctx, job.ID)
-	if err != nil || unchanged.State != jobs.StateRunning || unchanged.AttemptCount != second.AttemptCount || unchanged.LeaseOwner == nil || *unchanged.LeaseOwner != "worker-a" || unchanged.LeaseExpiresAt == nil || second.LeaseExpiresAt == nil || !unchanged.LeaseExpiresAt.Equal(*second.LeaseExpiresAt) {
+	if err != nil || unchanged.State != jobs.StateRunning || unchanged.ClaimAttempts != second.ClaimAttempts || unchanged.LeaseOwner == nil || *unchanged.LeaseOwner != "worker-a" || unchanged.LeaseExpiresAt == nil || second.LeaseExpiresAt == nil || !unchanged.LeaseExpiresAt.Equal(*second.LeaseExpiresAt) {
 		t.Fatalf("attempt 2 after stale mutations = %#v, %v", unchanged, err)
 	}
 	completed, err := repository.Succeed(ctx, jobs.LeaseRequest{
-		ID: job.ID, Owner: "worker-a", ExpectedAttempt: second.AttemptCount, Now: retryAt.Add(2 * time.Second),
+		ID: job.ID, Owner: "worker-a", ExpectedClaim: second.ClaimAttempts, Now: retryAt.Add(2 * time.Second),
 	})
 	if err != nil || completed.State != jobs.StateSucceeded {
 		t.Fatalf("Succeed(attempt 2) = %#v, %v", completed, err)
@@ -260,7 +260,7 @@ func TestPostgresJobExpiredLeaseRecoveryAndRestart(t *testing.T) {
 		t.Fatalf("expire lease: %v", err)
 	}
 	backdatedNow := time.Date(2000, 1, 1, 0, 0, 0, 0, time.UTC)
-	staleLease := jobs.LeaseRequest{ID: job.ID, Owner: "worker-a", ExpectedAttempt: claimed.AttemptCount, Now: backdatedNow}
+	staleLease := jobs.LeaseRequest{ID: job.ID, Owner: "worker-a", ExpectedClaim: claimed.ClaimAttempts, Now: backdatedNow}
 	if _, err := repository.RenewLease(ctx, jobs.RenewLeaseRequest{LeaseRequest: staleLease, LeaseDuration: time.Minute}); !errors.Is(err, jobs.ErrLeaseConflict) {
 		t.Fatalf("stale RenewLease() error = %v", err)
 	}
@@ -280,7 +280,7 @@ func TestPostgresJobExpiredLeaseRecoveryAndRestart(t *testing.T) {
 	if _, err := repository.ClaimNext(ctx, jobs.ClaimRequest{Owner: "worker-b", Now: now.Add(time.Hour), LeaseDuration: time.Minute}); !errors.Is(err, jobs.ErrNoClaimableJob) {
 		t.Fatalf("ClaimNext(RECOVERY_REQUIRED) error = %v", err)
 	}
-	if _, err := repository.Succeed(ctx, jobs.LeaseRequest{ID: job.ID, Owner: "worker-a", ExpectedAttempt: claimed.AttemptCount, Now: now.Add(11 * time.Second)}); !errors.Is(err, jobs.ErrInvalidTransition) {
+	if _, err := repository.Succeed(ctx, jobs.LeaseRequest{ID: job.ID, Owner: "worker-a", ExpectedClaim: claimed.ClaimAttempts, Now: now.Add(11 * time.Second)}); !errors.Is(err, jobs.ErrInvalidTransition) {
 		t.Fatalf("stale Succeed() error = %v", err)
 	}
 
@@ -294,7 +294,7 @@ func TestPostgresJobExpiredLeaseRecoveryAndRestart(t *testing.T) {
 		t.Fatalf("NewJobRepository(reopened) error = %v", err)
 	}
 	durable, err := reopenedRepository.Get(ctx, job.ID)
-	if err != nil || durable.State != jobs.StateRecoveryRequired || durable.AttemptCount != 1 {
+	if err != nil || durable.State != jobs.StateRecoveryRequired || durable.ClaimAttempts != 1 {
 		t.Fatalf("durable job after reopen = %#v, %v", durable, err)
 	}
 }
@@ -350,7 +350,7 @@ func migratedJobRepository(t *testing.T, ctx context.Context) *JobRepository {
 	if err != nil {
 		t.Fatalf("Apply() error = %v", err)
 	}
-	if !status.Compatible || status.CurrentVersion != 9 || status.LatestVersion != 9 {
+	if !status.Compatible || status.CurrentVersion != 10 || status.LatestVersion != 10 {
 		t.Fatalf("migration status = %#v", status)
 	}
 	repository, err := NewJobRepository(pool)

@@ -187,7 +187,7 @@ type sessionFixture struct {
 }
 
 func (fixture *sessionFixture) request() acquisition.StepRequest {
-	return acquisition.StepRequest{JobID: fixture.jobID, Owner: sessionOwner, Attempt: 1}
+	return acquisition.StepRequest{JobID: fixture.jobID, Owner: sessionOwner, ClaimAttempt: 1}
 }
 
 func newSessionFixture(t *testing.T) *sessionFixture {
@@ -218,7 +218,7 @@ func newSessionFixture(t *testing.T) *sessionFixture {
 			ID: sessionJobID, Type: acquisition.JobTypeAcquisition,
 			Payload:        []byte(`{"schema_version":1,"manifest_id":"` + string(sessionManifestID) + `"}`),
 			State:          jobs.StateRunning,
-			IdempotencyKey: &key, AttemptCount: 1, MaxAttempts: 3,
+			IdempotencyKey: &key, ClaimAttempts: 1, FailureCount: 0, MaxAttempts: 3,
 			LeaseOwner: stringPointer(sessionOwner), LeaseExpiresAt: &leaseExpiry,
 			CreatedAt: sessionNow, UpdatedAt: sessionNow,
 		},

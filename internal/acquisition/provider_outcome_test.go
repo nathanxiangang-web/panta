@@ -51,12 +51,12 @@ func errorMessage() *string {
 
 func validOutcomeRequest(outcome acquisition.ProviderOutcome) acquisition.ProviderOutcomeRequest {
 	request := acquisition.ProviderOutcomeRequest{
-		ManifestID:      executionManifestID,
-		JobID:           executionJobID,
-		Owner:           executionOwner,
-		ExpectedAttempt: executionAttempt,
-		Outcome:         outcome,
-		Now:             outcomeNow,
+		ManifestID:    executionManifestID,
+		JobID:         executionJobID,
+		Owner:         executionOwner,
+		ExpectedClaim: executionAttempt,
+		Outcome:       outcome,
+		Now:           outcomeNow,
 	}
 	transition, err := acquisition.ProviderOutcomeTransitionFor(outcome)
 	if err != nil {
@@ -143,8 +143,8 @@ func TestProviderOutcomeServiceValidatesRequests(t *testing.T) {
 		{name: "empty Manifest", mutate: func(r *acquisition.ProviderOutcomeRequest) { r.ManifestID = "" }},
 		{name: "empty Job", mutate: func(r *acquisition.ProviderOutcomeRequest) { r.JobID = "" }},
 		{name: "empty owner", mutate: func(r *acquisition.ProviderOutcomeRequest) { r.Owner = "   " }},
-		{name: "zero attempt", mutate: func(r *acquisition.ProviderOutcomeRequest) { r.ExpectedAttempt = 0 }},
-		{name: "negative attempt", mutate: func(r *acquisition.ProviderOutcomeRequest) { r.ExpectedAttempt = -1 }},
+		{name: "zero claim generation", mutate: func(r *acquisition.ProviderOutcomeRequest) { r.ExpectedClaim = 0 }},
+		{name: "negative claim generation", mutate: func(r *acquisition.ProviderOutcomeRequest) { r.ExpectedClaim = -1 }},
 		{name: "zero Now", mutate: func(r *acquisition.ProviderOutcomeRequest) { r.Now = time.Time{} }},
 		{name: "unknown outcome", mutate: func(r *acquisition.ProviderOutcomeRequest) {
 			r.Outcome = acquisition.ProviderOutcome("PROVIDER_UNKNOWN")
@@ -227,7 +227,7 @@ func TestProviderOutcomeServiceBuildsExactPlan(t *testing.T) {
 	}
 	plan := store.plans[0]
 	if plan.ManifestID != request.ManifestID || plan.JobID != request.JobID ||
-		plan.Owner != request.Owner || plan.ExpectedAttempt != request.ExpectedAttempt ||
+		plan.Owner != request.Owner || plan.ExpectedClaim != request.ExpectedClaim ||
 		plan.Outcome != request.Outcome {
 		t.Fatalf("plan identity = %#v", plan)
 	}

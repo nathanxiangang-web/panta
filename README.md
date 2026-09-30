@@ -235,6 +235,15 @@ for the later visibility stage — it is deliberately not Job `SUCCEEDED` and no
 Manifest `READY`. A committed outcome replays idempotently with `Changed=false`
 and no timestamp rewrite, and a conflicting proposal fails closed.
 
+Because one Job now runs the whole acquisition workflow, migration
+`0010_job_claim_generation.sql` splits the stale-worker fence from the failure
+budget: `claim_attempts` is an unbounded claim generation that every claim
+increments and that fences lease mutations, while `attempt_count`
+(`jobs.Job.FailureCount`) is consumed only by `RetryAt` and bounded by
+`max_attempts`. Claiming therefore never refuses a due `RETRY_WAIT` row because the
+budget is spent, so provider polling, the visibility stage, and later stages can
+each be scheduled repeatedly without starving the failure retry budget.
+
 The module stores no physical inventory and has no IndexCore/OpenList database
 or network dependency. Real clients, Journal cursors/projectors, Copy updates,
 visibility checks, Mutation Hints, and provider-specific behavior remain outside

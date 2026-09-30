@@ -407,19 +407,20 @@ visibility stage. No second visibility Job is created.
 `internal/acquisition` owns `ProviderOutcomeService` and the `ProviderOutcomeStore`
 port. `internal/store/postgres` implements the commit in one transaction:
 lock Manifest, verify exact identity plus `ACTIVE`, lock Job, verify the frozen
-Gate 3.2 linkage plus the `RUNNING` lease fence (owner, attempt, and unexpired lease
-authorized by database time), then mutate both rows and commit. A failure between
-the two mutations rolls both back.
+Gate 3.2 linkage plus the `RUNNING` lease fence (owner, claim generation, and
+unexpired lease authorized by database time), then mutate both rows and commit. A
+failure between the two mutations rolls both back.
 
 Job mutation semantics:
 
 ```text
 RETRY_WAIT         lease cleared, next_attempt_at = RetryAt, finished_at NULL,
-                   attempt_count preserved. This intentionally does not consult
-                   max_attempts the way a same-stage Job retry does: the Job is
-                   being queued for the next acquisition stage.
+                   claim generation and failure budget preserved. This
+                   intentionally does not consult max_attempts: the Job is being
+                   queued for the next acquisition stage, not retried for the same
+                   work.
 FAILED             lease cleared, next_attempt_at NULL, last_error required,
-                   finished_at set, attempt_count preserved
+                   finished_at set, claim generation and failure budget preserved
 CANCELED           lease cleared, next_attempt_at NULL, finished_at set, and no
                    provider files or tasks are touched by this persistence step
 RECOVERY_REQUIRED  lease cleared, next_attempt_at NULL, last_error required,
@@ -431,11 +432,53 @@ When the outcome keeps the Manifest at `ACTIVE`, its `updated_at` is deliberatel
 preserved: nothing about the Manifest changed, so rewriting the timestamp would be
 a spurious durable write.
 
-Replay is idempotent. If the Manifest already holds the exact milestone this
-outcome produces and the linked Job already holds its exact D-026 pairing, the call
-returns the durable records with `Changed=false` and rewrites nothing. A different
-proposed outcome after a committed one fails closed with a typed error, and two
-callers with the same fenced attempt produce at most one committed change.
+Replay is idempotent, and replay detection keys on the **durable Manifest + Job
+pairing** rather than on the Manifest state alone. `PROVIDER_IN_PROGRESS`
+legitimately leaves the Manifest `ACTIVE`, so keying on "Manifest is not ACTIVE"
+would misclassify its own committed outcome as a fresh handoff and fail its replay.
+If the Manifest already holds the exact milestone this outcome produces and the
+linked Job already holds its exact D-026 pairing, the call returns the durable
+records with `Changed=false` and rewrites nothing. A different proposed outcome
+after a committed one fails closed with a typed error, and two callers with the
+same fenced claim generation produce at most one committed change.
+
+## Claim generation versus failure budget
+
+One ACQUISITION Job now carries the whole acquisition workflow, so the same Job is
+claimed repeatedly: for provider polling, then visibility, then canonical stages.
+A single counter could not serve both the stale-worker fence and the failure retry
+budget, because stage transitions would consume the budget and could strand a Job in
+`RETRY_WAIT` forever — or block the visibility stage immediately after a successful
+download.
+
+Migration `0010_job_claim_generation.sql` therefore splits the two:
+
+```text
+claim_attempts  monotonically increasing claim generation
+                every successful claim increments it
+                never bounded
+                the fencing token: ExpectedClaim must equal it
+
+attempt_count   failure/retry budget (jobs.Job.FailureCount)
+                only RetryAt increments it
+                bounded by max_attempts
+                governs terminal FAILED
+```
+
+Consequences:
+
+```text
+ClaimNext       claims QUEUED, or RETRY_WAIT once next_attempt_at is due, and
+                never refuses a claim because the failure budget is spent
+RetryAt         the only operation that consumes the budget; it still terminates
+                the Job at max_attempts
+handoff         never changes the claim generation or the failure budget
+stale worker    a superseded generation cannot mutate state, even when the owner
+                string still matches
+```
+
+The existing `attempt_count` column name is retained for compatibility; the Go field
+is `jobs.Job.FailureCount` so the distinction is explicit at every call site.
 
 ## Deferred capabilities
 

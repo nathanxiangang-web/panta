@@ -23,7 +23,7 @@ func TestPostgresAcquisitionManifestRoundTripAndConstraints(t *testing.T) {
 		t.Fatalf("NewMigrator() error = %v", err)
 	}
 	status, err := migrator.Apply(ctx)
-	if err != nil || !status.Compatible || status.CurrentVersion != 9 || status.LatestVersion != 9 || len(status.Applied) != 9 {
+	if err != nil || !status.Compatible || status.CurrentVersion != 10 || status.LatestVersion != 10 || len(status.Applied) != 10 {
 		t.Fatalf("Apply() = %#v, %v", status, err)
 	}
 

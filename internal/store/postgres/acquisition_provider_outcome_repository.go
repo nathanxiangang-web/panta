@@ -62,26 +62,35 @@ FOR UPDATE`, string(plan.ManifestID)))
 		return acquisition.ProviderOutcomeResult{}, providerOutcomePersistenceError("lock Manifest", err)
 	}
 
-	if manifest.State != acquisition.StateActive {
-		result, replayErr := repository.replayCommittedOutcome(ctx, tx, manifest, plan)
-		if replayErr != nil {
-			return acquisition.ProviderOutcomeResult{}, replayErr
-		}
-		if err := tx.Commit(ctx); err != nil {
-			return acquisition.ProviderOutcomeResult{}, providerOutcomePersistenceError("commit provider outcome replay", err)
-		}
-		return result, nil
-	}
-	if err := verifyActiveManifestHandoff(manifest, plan); err != nil {
-		return acquisition.ProviderOutcomeResult{}, err
-	}
-
 	job, err := getOneJob(ctx, tx, "SELECT "+jobColumns+" FROM jobs WHERE job_id = $1 FOR UPDATE", string(plan.JobID))
 	if errors.Is(err, jobs.ErrNotFound) {
 		return acquisition.ProviderOutcomeResult{}, fmt.Errorf("%w: %s", acquisition.ErrProviderOutcomeJobMismatch, plan.JobID)
 	}
 	if err != nil {
 		return acquisition.ProviderOutcomeResult{}, providerOutcomePersistenceError("lock Job", err)
+	}
+
+	// Decide replay versus fresh handoff from the durable pair, not from the
+	// Manifest state alone. PROVIDER_IN_PROGRESS legitimately leaves the Manifest
+	// ACTIVE, so keying on "Manifest is not ACTIVE" would misclassify its own
+	// committed outcome as a fresh handoff and fail its replay.
+	replay, err := repository.isCommittedOutcome(manifest, job, plan)
+	if err != nil {
+		return acquisition.ProviderOutcomeResult{}, err
+	}
+	if replay {
+		if err := tx.Commit(ctx); err != nil {
+			return acquisition.ProviderOutcomeResult{}, providerOutcomePersistenceError("commit provider outcome replay", err)
+		}
+		return acquisition.ProviderOutcomeResult{Manifest: manifest, Job: job, Changed: false}, nil
+	}
+
+	if manifest.State != acquisition.StateActive {
+		return acquisition.ProviderOutcomeResult{}, fmt.Errorf("%w: Manifest %s is %s",
+			acquisition.ErrProviderOutcomeManifestState, manifest.ID, manifest.State)
+	}
+	if err := verifyActiveManifestHandoff(manifest, plan); err != nil {
+		return acquisition.ProviderOutcomeResult{}, err
 	}
 	expired, err := leaseExpiredByDatabaseTime(ctx, tx, job)
 	if err != nil {
@@ -115,7 +124,7 @@ RETURNING `+acquisitionManifestColumns,
 		}
 	}
 
-	// Mutation 2: advance the Job under the same fence.
+	// Mutation 2: advance the Job under the same claim-generation fence.
 	updatedJob, err := mutateJobForOutcome(ctx, tx, plan)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return acquisition.ProviderOutcomeResult{}, fmt.Errorf("%w: Job %s fence no longer matches",
@@ -131,47 +140,37 @@ RETURNING `+acquisitionManifestColumns,
 	return acquisition.ProviderOutcomeResult{Manifest: updatedManifest, Job: updatedJob, Changed: true}, nil
 }
 
-// replayCommittedOutcome returns the durable records without rewriting anything
-// when the Manifest already holds the exact milestone this outcome produces and
-// the linked Job already holds its exact pairing. Any other state fails closed.
-func (repository *ProviderOutcomeRepository) replayCommittedOutcome(
-	ctx context.Context,
-	tx pgx.Tx,
+// isCommittedOutcome reports whether the durable records already hold exactly the
+// outcome this plan would commit. Both halves of the D-026 pairing must match, so
+// a different proposed outcome after a committed one still fails closed.
+func (repository *ProviderOutcomeRepository) isCommittedOutcome(
 	manifest acquisition.Manifest,
+	job jobs.Job,
 	plan acquisition.ProviderOutcomePlan,
-) (acquisition.ProviderOutcomeResult, error) {
+) (bool, error) {
 	if manifest.ID != plan.ManifestID || manifest.State != plan.ManifestState {
-		return acquisition.ProviderOutcomeResult{}, fmt.Errorf("%w: Manifest %s is %s",
-			acquisition.ErrProviderOutcomeManifestState, manifest.ID, manifest.State)
+		return false, nil
 	}
 	if manifest.JobID == nil || *manifest.JobID != plan.JobID {
-		return acquisition.ProviderOutcomeResult{}, fmt.Errorf("%w: Manifest %s is not linked to Job %s",
+		return false, fmt.Errorf("%w: Manifest %s is not linked to Job %s",
 			acquisition.ErrProviderOutcomeJobMismatch, manifest.ID, plan.JobID)
 	}
-	job, err := getOneJob(ctx, tx, "SELECT "+jobColumns+" FROM jobs WHERE job_id = $1 FOR UPDATE", string(plan.JobID))
-	if errors.Is(err, jobs.ErrNotFound) {
-		return acquisition.ProviderOutcomeResult{}, fmt.Errorf("%w: %s", acquisition.ErrProviderOutcomeJobMismatch, plan.JobID)
-	}
-	if err != nil {
-		return acquisition.ProviderOutcomeResult{}, providerOutcomePersistenceError("lock Job for replay", err)
+	if job.State != plan.JobState {
+		return false, nil
 	}
 	if err := acquisition.ValidateLinkedAcquisitionJob(manifest.ID, job); err != nil {
-		return acquisition.ProviderOutcomeResult{}, fmt.Errorf("%w: %w", acquisition.ErrProviderOutcomeJobMismatch, err)
+		return false, fmt.Errorf("%w: %w", acquisition.ErrProviderOutcomeJobMismatch, err)
 	}
-	if job.State != plan.JobState {
-		return acquisition.ProviderOutcomeResult{}, fmt.Errorf("%w: Job %s is %s, not %s",
-			acquisition.ErrProviderOutcomeConflict, job.ID, job.State, plan.JobState)
-	}
-	return acquisition.ProviderOutcomeResult{Manifest: manifest, Job: job, Changed: false}, nil
+	return true, nil
 }
 
-// mutateJobForOutcome applies the D-026 Job semantics under the lease fence.
-// Attempt count and started_at are never modified here.
+// mutateJobForOutcome applies the D-026 Job semantics under the claim-generation
+// fence. Neither the claim generation nor the failure budget is modified here.
 func mutateJobForOutcome(ctx context.Context, tx pgx.Tx, plan acquisition.ProviderOutcomePlan) (jobs.Job, error) {
 	switch plan.JobState {
 	case jobs.StateRetryWait:
 		// RETRY_WAIT here queues the next acquisition stage, so it deliberately
-		// does not consult max_attempts the way a same-stage Job retry does.
+		// does not consult max_attempts the way a same-stage retry does.
 		return scanJob(tx.QueryRow(ctx, `
 UPDATE jobs AS job
 SET state = 'RETRY_WAIT',
@@ -182,9 +181,9 @@ SET state = 'RETRY_WAIT',
     finished_at = NULL,
     updated_at = $4
 WHERE job_id = $1 AND state = 'RUNNING' AND lease_owner = $2
-  AND attempt_count = $3 AND lease_expires_at > CURRENT_TIMESTAMP
+  AND claim_attempts = $3 AND lease_expires_at > CURRENT_TIMESTAMP
 RETURNING `+updatedJobColumns,
-			string(plan.JobID), plan.Owner, plan.ExpectedAttempt, plan.Now, plan.ErrorMessage, plan.RetryAt))
+			string(plan.JobID), plan.Owner, plan.ExpectedClaim, plan.Now, plan.ErrorMessage, plan.RetryAt))
 	case jobs.StateFailed:
 		return scanJob(tx.QueryRow(ctx, `
 UPDATE jobs AS job
@@ -196,9 +195,9 @@ SET state = 'FAILED',
     finished_at = $4,
     updated_at = $4
 WHERE job_id = $1 AND state = 'RUNNING' AND lease_owner = $2
-  AND attempt_count = $3 AND lease_expires_at > CURRENT_TIMESTAMP
+  AND claim_attempts = $3 AND lease_expires_at > CURRENT_TIMESTAMP
 RETURNING `+updatedJobColumns,
-			string(plan.JobID), plan.Owner, plan.ExpectedAttempt, plan.Now, plan.ErrorMessage))
+			string(plan.JobID), plan.Owner, plan.ExpectedClaim, plan.Now, plan.ErrorMessage))
 	case jobs.StateCanceled:
 		return scanJob(tx.QueryRow(ctx, `
 UPDATE jobs AS job
@@ -209,9 +208,9 @@ SET state = 'CANCELED',
     finished_at = $4,
     updated_at = $4
 WHERE job_id = $1 AND state = 'RUNNING' AND lease_owner = $2
-  AND attempt_count = $3 AND lease_expires_at > CURRENT_TIMESTAMP
+  AND claim_attempts = $3 AND lease_expires_at > CURRENT_TIMESTAMP
 RETURNING `+updatedJobColumns,
-			string(plan.JobID), plan.Owner, plan.ExpectedAttempt, plan.Now))
+			string(plan.JobID), plan.Owner, plan.ExpectedClaim, plan.Now))
 	case jobs.StateRecoveryRequired:
 		// Recovery is non-terminal, so finished_at stays NULL and the Job is not
 		// claimable by ordinary ClaimNext.
@@ -225,9 +224,9 @@ SET state = 'RECOVERY_REQUIRED',
     finished_at = NULL,
     updated_at = $4
 WHERE job_id = $1 AND state = 'RUNNING' AND lease_owner = $2
-  AND attempt_count = $3 AND lease_expires_at > CURRENT_TIMESTAMP
+  AND claim_attempts = $3 AND lease_expires_at > CURRENT_TIMESTAMP
 RETURNING `+updatedJobColumns,
-			string(plan.JobID), plan.Owner, plan.ExpectedAttempt, plan.Now, plan.ErrorMessage))
+			string(plan.JobID), plan.Owner, plan.ExpectedClaim, plan.Now, plan.ErrorMessage))
 	default:
 		return jobs.Job{}, acquisition.ErrInvalidProviderOutcome
 	}
@@ -248,7 +247,7 @@ func verifyActiveManifestHandoff(manifest acquisition.Manifest, plan acquisition
 }
 
 // verifyRunningJobFence proves the Job is the linked ACQUISITION Job and holds the
-// fenced RUNNING lease.
+// fenced RUNNING lease for the expected claim generation.
 func verifyRunningJobFence(manifest acquisition.Manifest, job jobs.Job, plan acquisition.ProviderOutcomePlan, expired bool) error {
 	if err := acquisition.ValidateLinkedAcquisitionJob(manifest.ID, job); err != nil {
 		return fmt.Errorf("%w: %w", acquisition.ErrProviderOutcomeJobMismatch, err)
@@ -259,9 +258,9 @@ func verifyRunningJobFence(manifest acquisition.Manifest, job jobs.Job, plan acq
 	if job.LeaseOwner == nil || *job.LeaseOwner != plan.Owner {
 		return fmt.Errorf("%w: Job %s is not leased by %s", acquisition.ErrProviderOutcomeFence, job.ID, plan.Owner)
 	}
-	if job.AttemptCount != plan.ExpectedAttempt {
-		return fmt.Errorf("%w: Job %s attempt %d does not match %d",
-			acquisition.ErrProviderOutcomeFence, job.ID, job.AttemptCount, plan.ExpectedAttempt)
+	if job.ClaimAttempts != plan.ExpectedClaim {
+		return fmt.Errorf("%w: Job %s claim generation %d does not match %d",
+			acquisition.ErrProviderOutcomeFence, job.ID, job.ClaimAttempts, plan.ExpectedClaim)
 	}
 	if expired {
 		return fmt.Errorf("%w: Job %s lease has expired", acquisition.ErrProviderOutcomeFence, job.ID)
@@ -284,7 +283,7 @@ func validateProviderOutcomePlan(plan acquisition.ProviderOutcomePlan) error {
 	if err != nil {
 		return err
 	}
-	if plan.ManifestID == "" || plan.JobID == "" || plan.Owner == "" || plan.ExpectedAttempt < 1 || plan.Now.IsZero() {
+	if plan.ManifestID == "" || plan.JobID == "" || plan.Owner == "" || plan.ExpectedClaim < 1 || plan.Now.IsZero() {
 		return acquisition.ErrInvalidProviderOutcome
 	}
 	if plan.ManifestState != transition.ManifestState || plan.JobState != transition.JobState {
