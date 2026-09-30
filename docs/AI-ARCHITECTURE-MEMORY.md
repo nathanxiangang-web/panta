@@ -3,8 +3,8 @@
 > Canonical short-form project memory for Architect/AI sessions.
 >
 > Last architecture-memory synchronization: **2026-09-30**
-> Active Gate: **3.8 / Issue #39 — IndexCore trusted Mutation Hint and observation handoff**
-> Governing corrections: **D-029** (IndexCore-owned observation) and **D-030** (Git-first AI reconstruction).
+> Active Gate: **3.9 / Issue #41 — Deterministic acquired-result identity capture**
+> Governing corrections: **D-029** (IndexCore-owned observation), **D-030** (Git-first AI reconstruction), and **D-031** (deterministic direct-child acquisition identity).
 >
 > **Read this file before planning, reviewing, or authorizing any new Gate.**
 >
@@ -160,6 +160,27 @@ reason    = POSSIBLE_CHANGE
 
 Do not use `openlist_mount_path` or `provider_scope` to build the Hint.
 
+## 5.1 Deterministic acquisition child identity
+
+Before a newly successful provider acquisition can proceed beyond the provider stage, Panta must know one exact child name under the target directory:
+
+```text
+indexcore_root_id
++ manifest.target_path
++ manifest.expected_name
+```
+
+Semantics:
+- `target_path` = directory scope refreshed by IndexCore;
+- `expected_name` = exact direct child expected under that scope;
+- expected_name may be absent when the Manifest is first created;
+- provider success must freeze it before `AWAITING_VISIBILITY`;
+- if intent already supplied the name, provider-reported identity must match exactly;
+- no provider FileId/DirId, OpenList path, Journal ordering, timing window, newest-item or only-item heuristic may replace it;
+- the 115 adapter may use only successful `OfflineTask.Name` for this provider-neutral identity.
+
+Gate 3.10 may later use the frozen identity for exact canonical confirmation. Gate 3.9 does not authorize Q5/READY.
+
 ## 6. Job Engine invariants
 
 The ACQUISITION Job is the durable execution safety boundary.
@@ -278,13 +299,14 @@ Accepted:
 - Gate 3.5 — connection-scoped session/credential boundary
 - Gate 3.6 — concrete 115 Downloader
 - Gate 3.7 — atomic provider-stage outcome handoff
+- Gate 3.8 — IndexCore trusted Mutation Hint and observation handoff
 
 Authorized now:
-- **Gate 3.8 — Issue #39 — IndexCore trusted Mutation Hint and observation handoff**
+- **Gate 3.9 — Issue #41 — Deterministic acquired-result identity capture**
 
 Not authorized yet:
 - direct Panta OpenList acquisition verifier;
-- canonical confirmation/READY implementation beyond current Gate;
+- Q5/Journal canonical confirmation and READY beyond current Gate;
 - API/UI;
 - auth/quota/share;
 - Agent implementation;
