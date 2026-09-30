@@ -74,12 +74,15 @@ INSERT INTO jobs (
 	); err != nil {
 		t.Fatalf("seed RUNNING ACQUISITION job: %v", err)
 	}
+	// D-031: a Manifest that has left the provider stage must carry its frozen
+	// direct-child identity, so every later-state seed supplies one.
+	expectedName := "acquired-item.bin"
 	if _, err := pool.Exec(ctx, `
 INSERT INTO acquisition_manifests (
     manifest_id, source_type, source_ref, target_storage_binding_id, target_path,
-    job_id, state, created_at, updated_at
-) VALUES ($1, 'opaque-source', 'opaque-ref', $2, '/downloads/item', $3, $4, $5, $5)`,
-		string(manifestID), string(bindingID), string(jobID), string(manifestState), seededAt,
+    expected_name, job_id, state, created_at, updated_at
+) VALUES ($1, 'opaque-source', 'opaque-ref', $2, '/downloads/item', $6, $3, $4, $5, $5)`,
+		string(manifestID), string(bindingID), string(jobID), string(manifestState), seededAt, expectedName,
 	); err != nil {
 		t.Fatalf("seed %s Manifest: %v", manifestState, err)
 	}
@@ -107,7 +110,7 @@ func newRefreshIntegrationFixture(t *testing.T) (context.Context, *pgxpool.Pool,
 		t.Fatalf("NewMigrator() error = %v", err)
 	}
 	status, err := migrator.Apply(ctx)
-	if err != nil || !status.Compatible || status.CurrentVersion != 10 {
+	if err != nil || !status.Compatible || status.CurrentVersion != 11 {
 		t.Fatalf("Apply() = %#v, %v", status, err)
 	}
 	bindingID := storage.BindingID("38000000-0000-4000-8000-000000000001")

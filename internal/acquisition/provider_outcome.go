@@ -100,6 +100,10 @@ type ProviderOutcomeRequest struct {
 	Now           time.Time
 	RetryAt       *time.Time
 	ErrorMessage  *string
+	// ProviderResultName is the provider-neutral direct-child name the provider
+	// reported for a successful step. It is set only for PROVIDER_SUCCEEDED, and it
+	// is never trimmed or normalized.
+	ProviderResultName *string
 }
 
 // ProviderOutcomeResult is the durable state after a handoff.
@@ -125,6 +129,9 @@ type ProviderOutcomePlan struct {
 	Now           time.Time
 	RetryAt       *time.Time
 	ErrorMessage  *string
+	// ProviderResultName is the optional provider-reported direct-child name carried
+	// into the D-031 expected-name resolution.
+	ProviderResultName *string
 }
 
 // ProviderOutcomeStore commits the plan atomically.
@@ -178,6 +185,16 @@ func BuildProviderOutcomePlan(request ProviderOutcomeRequest) (ProviderOutcomeTr
 				ErrInvalidProviderOutcome, request.Outcome)
 		}
 	}
+	// Only PROVIDER_SUCCEEDED may carry provider-reported result identity. Every other
+	// outcome deliberately reports none rather than inventing or forwarding one.
+	var providerResultName *string
+	if request.Outcome == ProviderOutcomeSucceeded && request.ProviderResultName != nil {
+		if err := ValidateExpectedName(*request.ProviderResultName); err != nil {
+			return ProviderOutcomeTransition{}, ProviderOutcomePlan{}, fmt.Errorf(
+				"%w: provider result name is not a valid direct child", ErrProviderResultName)
+		}
+		providerResultName = cloneVerbatim(request.ProviderResultName)
+	}
 	return transition, ProviderOutcomePlan{
 		ManifestID:    request.ManifestID,
 		JobID:         request.JobID,
@@ -189,7 +206,21 @@ func BuildProviderOutcomePlan(request ProviderOutcomeRequest) (ProviderOutcomeTr
 		Now:           request.Now.UTC(),
 		RetryAt:       cloneTime(request.RetryAt),
 		ErrorMessage:  cloneTrimmed(request.ErrorMessage),
+		// The provider name is copied verbatim: only a success may carry it, and it
+		// must survive to persistence exactly as reported.
+		ProviderResultName: providerResultName,
 	}, nil
+}
+
+// cloneVerbatim copies an optional provider-reported name without trimming,
+// cleaning, or normalizing it. A different outcome must not smuggle identity, so a
+// non-success outcome is normalized to nil.
+func cloneVerbatim(value *string) *string {
+	if value == nil {
+		return nil
+	}
+	cloned := *value
+	return &cloned
 }
 
 func cloneTime(value *time.Time) *time.Time {

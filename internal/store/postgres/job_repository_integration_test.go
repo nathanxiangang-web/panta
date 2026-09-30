@@ -350,7 +350,7 @@ func migratedJobRepository(t *testing.T, ctx context.Context) *JobRepository {
 	if err != nil {
 		t.Fatalf("Apply() error = %v", err)
 	}
-	if !status.Compatible || status.CurrentVersion != 10 || status.LatestVersion != 10 {
+	if !status.Compatible || status.CurrentVersion != 11 || status.LatestVersion != 11 {
 		t.Fatalf("migration status = %#v", status)
 	}
 	repository, err := NewJobRepository(pool)

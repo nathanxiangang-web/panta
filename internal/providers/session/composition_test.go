@@ -27,8 +27,8 @@ func TestRealSessionCompositionExecutesWithTestprovider(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Execute() with the real session registry error = %v", err)
 	}
-	if outcome != acquisition.OutcomeProviderInProgress {
-		t.Fatalf("outcome = %q, want %q", outcome, acquisition.OutcomeProviderInProgress)
+	if outcome.Outcome != acquisition.OutcomeProviderInProgress {
+		t.Fatalf("outcome = %q, want %q", outcome.Outcome, acquisition.OutcomeProviderInProgress)
 	}
 	// The downloader that ran is the one registered against the exact connection
 	// and credential identity, proven by the recording port's own identity.
@@ -115,7 +115,7 @@ func TestNoSecretMaterialEntersProductState(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Execute() error = %v", err)
 	}
-	if outcome == "" {
+	if outcome.Outcome == "" {
 		t.Fatal("Execute() returned no outcome")
 	}
 

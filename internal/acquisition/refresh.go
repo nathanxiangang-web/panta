@@ -169,6 +169,17 @@ func (step *RefreshStep) Submit(ctx context.Context, request RefreshRequest) (Re
 	if manifest.State != StateAwaitingVisibility {
 		return RefreshResult{}, fmt.Errorf("%w: %s", ErrRefreshManifestState, manifest.State)
 	}
+	// D-031: an acquisition that has no durable direct-child identity must not be
+	// handed to the observation pipeline at all. Advancing it would create an
+	// AWAITING_CANONICAL Manifest that a later canonical-confirmation gate could
+	// never resolve without guessing.
+	if manifest.ExpectedName == nil {
+		return RefreshResult{}, fmt.Errorf("%w: Manifest %s", ErrExpectedNameRequired, manifest.ID)
+	}
+	if err := ValidateExpectedName(*manifest.ExpectedName); err != nil {
+		return RefreshResult{}, fmt.Errorf("%w: Manifest %s expected name is not a valid direct child",
+			ErrExpectedNameRequired, manifest.ID)
+	}
 	if err := validateRefreshJob(manifest, job, plan); err != nil {
 		return RefreshResult{}, err
 	}

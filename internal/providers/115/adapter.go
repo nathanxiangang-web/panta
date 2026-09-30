@@ -153,6 +153,10 @@ func (adapter *Adapter) StartDownload(ctx context.Context, request contracts.Dow
 // DownloadStatus finds the exact info hash across a bounded number of provider
 // task pages and maps its status. Provider success is never translated into
 // Manifest READY.
+//
+// D-031: a succeeded task additionally reports the exact acquired top-level object
+// name, taken verbatim from the provider task. Only OfflineTask.Name crosses this
+// boundary; FileId and DirId stay inside the adapter and never become identity.
 func (adapter *Adapter) DownloadStatus(ctx context.Context, reference contracts.TaskReference) (contracts.TaskStatus, error) {
 	if err := ctx.Err(); err != nil {
 		return contracts.TaskStatus{}, err
@@ -172,7 +176,20 @@ func (adapter *Adapter) DownloadStatus(ctx context.Context, reference contracts.
 	if err != nil {
 		return contracts.TaskStatus{}, fmt.Errorf("%w: %d", ErrTaskStateUnknown, task.Status)
 	}
-	return contracts.TaskStatus{Reference: reference, State: state}, nil
+	status := contracts.TaskStatus{Reference: reference, State: state}
+	if state != contracts.TaskStateSucceeded {
+		// Pending, running, failed, and canceled tasks carry no result identity.
+		return status, nil
+	}
+	// A succeeded task without a usable name is not usable success: reporting it
+	// would let an unidentifiable acquisition advance.
+	resultName := task.Name
+	if err := contracts.ValidateDirectChildName(resultName); err != nil {
+		return contracts.TaskStatus{}, fmt.Errorf("%w: succeeded task %s reported name %q: %w",
+			ErrTaskResultNameMissing, reference.Value, resultName, err)
+	}
+	status.Result = &contracts.DownloadResult{Name: resultName}
+	return status, nil
 }
 
 // findTask walks provider pages until the exact info hash is found. Pagination is

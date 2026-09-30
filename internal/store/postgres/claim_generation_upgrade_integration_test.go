@@ -61,7 +61,7 @@ func TestPostgresJobClaimGenerationUpgradeMigratesLegacyAttemptCount(t *testing.
 	if err != nil {
 		t.Fatalf("migrations.All() error = %v", err)
 	}
-	if len(history) != 10 {
+	if len(history) != 11 {
 		t.Fatalf("migration history length = %d, want 10", len(history))
 	}
 	// Apply the pre-split schema only: versions 1 through 9.
@@ -113,7 +113,7 @@ SELECT EXISTS (
 	if err != nil {
 		t.Fatalf("upgrade to version 10: %v", err)
 	}
-	if !status.Compatible || status.CurrentVersion != 10 || status.LatestVersion != 10 {
+	if !status.Compatible || status.CurrentVersion != 11 || status.LatestVersion != 11 {
 		t.Fatalf("upgrade status = %#v", status)
 	}
 	repository, err := NewJobRepository(pool)

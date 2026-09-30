@@ -21,6 +21,9 @@ const (
 	refreshJobID      = jobs.JobID("f0000000-0000-4000-8000-000000000002")
 	refreshBindingID  = storage.BindingID("f0000000-0000-4000-8000-000000000003")
 	refreshOwner      = "acquisition-worker-a"
+	// Gate 3.9: the frozen direct-child identity every valid AWAITING_VISIBILITY
+	// Manifest now carries.
+	refreshExpectedName = "acquired-item.bin"
 )
 
 // hintPortDouble records exactly what the step submitted.
@@ -138,11 +141,13 @@ func newRefreshFixture(t *testing.T, options ...func(*storage.Binding, *acquisit
 		CreatedAt:         refreshNow, UpdatedAt: refreshNow,
 	}
 	linkedJob := refreshJobID
+	expectedName := refreshExpectedName
 	manifest := acquisition.Manifest{
 		ID: refreshManifestID, SourceType: "opaque-source", SourceRef: "opaque-ref",
 		TargetStorageBindingID: refreshBindingID, TargetPath: "/downloads/movies",
-		JobID: &linkedJob,
-		State: acquisition.StateAwaitingVisibility, CreatedAt: refreshNow, UpdatedAt: refreshNow,
+		ExpectedName: &expectedName,
+		JobID:        &linkedJob,
+		State:        acquisition.StateAwaitingVisibility, CreatedAt: refreshNow, UpdatedAt: refreshNow,
 	}
 	leaseEnd := refreshNow.Add(time.Hour)
 	startedAt := refreshNow

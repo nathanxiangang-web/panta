@@ -35,6 +35,9 @@ const (
 	compositionBindingID  = storage.BindingID("a0000000-0000-4000-8000-000000000004")
 
 	compositionOwner = "composition-lease-owner"
+
+	// Gate 3.9 requires a frozen direct-child identity before a Hint may be sent.
+	compositionExpectedName = "acquired-item.bin"
 )
 
 var compositionNow = time.Date(2026, 9, 30, 12, 0, 0, 0, time.UTC)
@@ -333,7 +336,8 @@ func TestRefreshStepWithComposedProductionPort(t *testing.T) {
 	manifest := acquisition.Manifest{
 		ID: compositionManifestID, SourceType: "opaque-source", SourceRef: "opaque-ref",
 		TargetStorageBindingID: compositionBindingID, TargetPath: compositionScope,
-		JobID: pointerTo(compositionJobID), State: acquisition.StateAwaitingVisibility,
+		ExpectedName: pointerTo(compositionExpectedName),
+		JobID:        pointerTo(compositionJobID), State: acquisition.StateAwaitingVisibility,
 		CreatedAt: compositionNow, UpdatedAt: compositionNow,
 	}
 	job := jobs.Job{

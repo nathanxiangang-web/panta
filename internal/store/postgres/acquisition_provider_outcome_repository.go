@@ -100,18 +100,50 @@ FOR UPDATE`, string(plan.ManifestID)))
 		return acquisition.ProviderOutcomeResult{}, err
 	}
 
-	// Mutation 1: advance the Manifest milestone only while it still holds the
-	// accepted pre-handoff state. When the outcome keeps the Manifest at ACTIVE,
-	// updated_at is deliberately preserved: nothing about the Manifest changed, so
-	// rewriting its timestamp would be a spurious durable write.
-	updatedManifest, err := scanAcquisitionManifest(tx.QueryRow(ctx, `
+	// Resolve the D-031 durable identity for a provider success from the locked
+	// Manifest and the provider-reported name. This happens before any mutation so a
+	// conflict or a missing identity fails closed with nothing written.
+	var resolvedExpectedName *string
+	if plan.Outcome == acquisition.ProviderOutcomeSucceeded {
+		name, err := resolveExpectedNameForSuccess(manifest, plan)
+		if err != nil {
+			return acquisition.ProviderOutcomeResult{}, err
+		}
+		resolvedExpectedName = name
+	}
+
+	var updatedManifest acquisition.Manifest
+	if resolvedExpectedName != nil {
+		// Mutation 1a (provider success): freeze the direct-child identity and advance
+		// the milestone in one statement, so identity and state can never diverge. The
+		// expected_name predicate fences a concurrent conflicting resolution, and the
+		// IS NOT DISTINCT FROM comparison is null-safe for a currently-NULL name.
+		updatedManifest, err = scanAcquisitionManifest(tx.QueryRow(ctx, `
+UPDATE acquisition_manifests
+SET state = $3,
+    expected_name = $5,
+    updated_at = $4
+WHERE manifest_id = $1 AND state = $2
+  AND expected_name IS NOT DISTINCT FROM $6
+RETURNING `+acquisitionManifestColumns,
+			string(plan.ManifestID), string(acquisition.StateActive), string(plan.ManifestState),
+			plan.Now, *resolvedExpectedName, manifest.ExpectedName))
+	} else {
+		// Mutation 1b (every other outcome): advance the milestone without touching
+		// identity. When the outcome keeps the Manifest at ACTIVE, updated_at is
+		// deliberately preserved: nothing about the Manifest changed, so rewriting its
+		// timestamp would be a spurious durable write.
+		updatedManifest, err = scanAcquisitionManifest(tx.QueryRow(ctx, `
 UPDATE acquisition_manifests
 SET state = $3,
     updated_at = CASE WHEN state = $3 THEN updated_at ELSE $4 END
 WHERE manifest_id = $1 AND state = $2
 RETURNING `+acquisitionManifestColumns,
-		string(plan.ManifestID), string(acquisition.StateActive), string(plan.ManifestState), plan.Now))
+			string(plan.ManifestID), string(acquisition.StateActive), string(plan.ManifestState), plan.Now))
+	}
 	if errors.Is(err, pgx.ErrNoRows) {
+		// Either the Manifest moved on, or a concurrent handoff froze a different
+		// expected name. Both are conflicts on the same durable identity.
 		return acquisition.ProviderOutcomeResult{}, fmt.Errorf("%w: Manifest %s changed during handoff",
 			acquisition.ErrProviderOutcomeConflict, plan.ManifestID)
 	}
@@ -138,6 +170,23 @@ RETURNING `+acquisitionManifestColumns,
 		return acquisition.ProviderOutcomeResult{}, providerOutcomePersistenceError("commit provider outcome", err)
 	}
 	return acquisition.ProviderOutcomeResult{Manifest: updatedManifest, Job: updatedJob, Changed: true}, nil
+}
+
+// resolveExpectedNameForSuccess applies the frozen D-031 identity rules to the
+// locked Manifest and the provider-reported name, and reports whether the durable
+// value must change.
+//
+// The caller applies the frozen rules through acquisition.ResolveProviderResultName,
+// so the transaction and the domain share one decision table.
+func resolveExpectedNameForSuccess(
+	manifest acquisition.Manifest,
+	plan acquisition.ProviderOutcomePlan,
+) (*string, error) {
+	resolved, _, err := acquisition.ResolveProviderResultName(manifest.ExpectedName, plan.ProviderResultName)
+	if err != nil {
+		return nil, err
+	}
+	return &resolved, nil
 }
 
 // isCommittedOutcome reports whether the durable records already hold exactly the
