@@ -128,6 +128,9 @@ type Repository interface {
 	Get(context.Context, JobID) (Job, error)
 	GetByIdempotencyKey(context.Context, string) (Job, error)
 	ClaimNext(context.Context, ClaimRequest) (Job, error)
+	// ClaimNextByType selects only a registered job family inside the atomic
+	// claim query; callers must not claim arbitrary work and filter afterward.
+	ClaimNextByType(context.Context, string, ClaimRequest) (Job, error)
 	RenewLease(context.Context, RenewLeaseRequest) (Job, error)
 	Succeed(context.Context, LeaseRequest) (Job, error)
 	Fail(context.Context, FailureRequest) (Job, error)
