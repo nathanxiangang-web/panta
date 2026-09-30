@@ -549,3 +549,64 @@ mount "/115" + target "/downloads/item" -> "/115/downloads/item"
 ```
 
 This preserves D-022/D-025's separation between provider target coordinates, OpenList observation coordinates, and IndexCore canonical root identity.
+
+
+## D-029 — Panta does not directly verify OpenList during acquisition
+
+**Status:** Accepted — **supersedes D-028 for acquisition verification**
+
+D-028 incorrectly elevated OpenList from IndexCore's provider/collector dependency into a direct Panta acquisition dependency.
+
+The accepted observation boundary remains D-018:
+
+```text
+Storage
+  -> OpenList
+  -> IndexCore Collector
+  -> Canonical + Journal
+  -> Panta
+```
+
+Therefore, after a provider reports download success, Panta does **not** call OpenList to prove visibility.
+
+Instead:
+
+```text
+Manifest AWAITING_VISIBILITY
+        ↓
+StorageBinding.indexcore_root_id
++ Manifest.target_path
+        ↓
+IndexCore trusted Mutation Hint
+        ↓
+IndexCore-owned OpenList scoped verification
+        ↓
+Canonical + Journal
+        ↓
+Panta confirmation
+```
+
+Exact Mutation Hint mapping:
+
+```text
+root_id   = StorageBinding.indexcore_root_id
+scope_key = Manifest.target_path
+reason    = POSSIBLE_CHANGE
+```
+
+The following coordinates remain separate and must not be derived from one another:
+
+```text
+provider_scope          provider-side mutation target
+openlist_mount_path     IndexCore/OpenList observation configuration
+indexcore_root_id       canonical IndexCore root identity
+manifest.target_path    directory scope inside the selected binding/root
+```
+
+`AWAITING_VISIBILITY` now means the provider stage is complete and Panta is waiting to hand the affected scope to the **IndexCore-owned observation pipeline**. It does not authorize a direct Panta -> OpenList stat.
+
+After IndexCore accepts the trusted Hint, Panta may advance to `AWAITING_CANONICAL`, but Hint acceptance is only durable verification work ingress. It is never Canonical truth and never READY.
+
+Repeated identical Mutation Hints are intentionally safe at-least-once signals: IndexCore coalesces them through its accepted DirtyScopeWork state machine. A duplicate Hint may advance signal metadata but cannot duplicate the provider download or directly create Canonical truth.
+
+D-008's READY principle remains unchanged in meaning: the acquired result must become observable through the OpenList-backed IndexCore pipeline and then be canonically confirmed through IndexCore Query/Journal before Panta marks READY. Panta itself does not need a separate OpenList verification hop.
