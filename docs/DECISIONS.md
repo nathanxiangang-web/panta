@@ -974,3 +974,26 @@ Gate 3.15 accepted an internally complete, fail-closed acquisition runtime graph
 - No live 115 account action, production deployment, API/UI, new queue, direct OpenList acquisition check or schema migration is authorized in this Gate.
 
 Gate 3.16 evidence requires protected-secret/preflight safety tests and controlled PostgreSQL+local HTTP integration. Real 115 credentials and production deployment remain separately gated.
+
+## D-040 — Deterministic source intake preserves exact provider input and stays side-effect-free
+
+**Status:** Accepted
+
+Gate 3.16 made the accepted acquisition runtime safely operable, but the product still lacks the deterministic intake boundary required by the Gate 3 blueprint. A supported source must become durable acquisition intent without hand-seeding database state and without allowing source parsing to become a second provider-specific execution layer.
+
+Rules:
+- supported deterministic MVP schemes are initially `magnet`, `http`, `https`, and `ed2k`;
+- Source Resolver normalizes/classifies the scheme only; the accepted source value is persisted and later passed to DownloaderProvider exactly as supplied;
+- no trim, truncation, query stripping, percent re-encoding, magnet canonicalization or provider-specific source rewriting is allowed by this decision;
+- validation is structural and side-effect-free: no DNS/HTTP/provider/OpenList/IndexCore/Search/Agent call;
+- HTTP(S) must be absolute and host-bearing and must reject embedded userinfo; magnet/ed2k remain bounded opaque values after scheme validation;
+- ExpectedName remains explicit caller intent/fallback; Source Resolver never guesses the provider result locator;
+- acquisition submission reuses existing Manifest creation and ActivationService rather than duplicating topology, lineage, target or Job-link validation;
+- stable Manifest/Job identity or an equivalently deterministic injected ID seam is required for safe replay; conflicting replay fails closed;
+- activation failure leaves explicit PENDING Manifest intent available for diagnosis/retry rather than deleting or hiding it;
+- submission enqueues only. It must never start the Gate 3.16 worker or cross a provider/network side-effect boundary;
+- source text must not be copied into operator logs/errors beyond durable product state that is explicitly designed to hold source_ref;
+- no schema migration, concrete 115 credential logic, OpenList acquisition verifier, IndexCore DB client, API/UI/auth/quota/share/Agent implementation is authorized by this decision.
+
+Gate 3.17 / Issue #58 implements and proves this boundary. Human-authorized real 115/OpenList/IndexCore staging acceptance remains a later separate gate.
+

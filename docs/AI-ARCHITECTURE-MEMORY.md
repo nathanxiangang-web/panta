@@ -2,9 +2,9 @@
 
 > Canonical short-form project memory for Architect/AI sessions.
 >
-> Last architecture-memory synchronization: **2026-09-30**
-> Active Gate: **3.16 / Issue #56 — Protected operator bootstrap, read-only preflight and explicit worker startup**
-> Governing corrections: **D-029** (IndexCore-owned observation), **D-030** (Git-first AI reconstruction), **D-032** (durable result_name locator), **D-033** (READY anchored to one canonical projected Copy), **D-034** (one-claim stage routing), **D-035** (type-scoped claiming and atomic recovery), **D-036** (one explicit runner tick), **D-037** (opt-in worker lifecycle), **D-038** (fail-closed runtime graph and secret/trust boundaries), and **D-039** (protected operator bootstrap/preflight).
+> Last architecture-memory synchronization: **2026-10-01**
+> Active Gate: **3.17 / Issue #58 — Deterministic Source Resolver and acquisition submission boundary**
+> Governing corrections: **D-029** (IndexCore-owned observation), **D-030** (Git-first AI reconstruction), **D-032** (durable result_name locator), **D-033** (READY anchored to one canonical projected Copy), **D-034** (one-claim stage routing), **D-035** (type-scoped claiming and atomic recovery), **D-036** (one explicit runner tick), **D-037** (opt-in worker lifecycle), **D-038** (fail-closed runtime graph and secret/trust boundaries), **D-039** (protected operator bootstrap/preflight), and **D-040** (deterministic source intake with exact value preservation).
 >
 > **Read this file before planning, reviewing, or authorizing any new Gate.**
 >
@@ -288,11 +288,32 @@ Default disabled process must remain side-effect-free. Controlled PostgreSQL+HTT
 
 ## 5.8 Protected operator bootstrap
 
-D-039 / Gate 3.16: stock CLI remains disabled and side-effect-free; an explicit read-only preflight validates externally protected credentials, trusted Hint configuration, schema v12 and exact active ProviderID/ConnectionID/CredentialRef coverage **without** claiming Jobs, submitting hints, migrating, contacting 115, or mutating any data.
+D-039 / Gate 3.16 is accepted: stock CLI remains disabled and side-effect-free; an explicit read-only preflight validates externally protected credentials, trusted Hint configuration, schema v12 and exact active ProviderID/ConnectionID/CredentialRef coverage **without** claiming Jobs, submitting hints, migrating, contacting 115, or mutating any data.
 
 Explicit operator worker start reuses exactly one accepted D-038 runtime graph with a restricted external SecretResolver, D-037 serial Worker and SIGINT/SIGTERM cancellation. No raw cookie/token in CLI process args, logs, Git or Panta tables; no silent credential fallback.
 
-Gate 3.16 does not authorize AI to run a real 115 account download or deploy to production. Only local controlled PostgreSQL/HTTP fakes are in-scope.
+Gate 3.16 does not authorize AI to run a real 115 account download or deploy to production. Only local controlled PostgreSQL/HTTP fakes were accepted as evidence.
+
+## 5.9 Deterministic source intake and submission
+
+D-040 / Gate 3.17 owns the missing deterministic intake boundary before any human-authorized live-account acceptance.
+
+Supported MVP schemes are initially `magnet`, `http`, `https`, and `ed2k`. Resolution is validation/classification only: it performs no DNS, HTTP, provider, OpenList, IndexCore, Search or Agent work.
+
+The resolver may normalize the **scheme/type** but must preserve the accepted source value exactly:
+
+```text
+input source string
+  -> validate/classify scheme
+  -> Manifest.source_ref = exact accepted input
+  -> ExecutionInput.Download.Source.Value = same exact value
+```
+
+Do not trim, truncate, rebuild magnet query parameters, percent-reencode, strip suffixes or invent a provider-specific canonical source. HTTP(S) userinfo is rejected. ExpectedName remains explicit caller intent; never guess result_name from the source.
+
+Submission composes the already accepted Manifest creation and activation services. Stable IDs/idempotency must make replay deterministic; an activation failure leaves explicit PENDING intent rather than hidden cleanup. Submission itself never starts the worker or crosses a provider/network side-effect boundary.
+
+Real 115/OpenList/IndexCore staging acceptance remains separately gated until Gate 3.17 is accepted.
 
 ## 6. Job Engine invariants
 
@@ -420,14 +441,16 @@ Accepted:
 - Gate 3.13 — bounded one-shot acquisition RunOnce
 - Gate 3.14 — opt-in serial acquisition worker lifecycle
 - Gate 3.15 — fail-closed runtime composition and controlled PostgreSQL+HTTP E2E
+- Gate 3.16 — protected operator bootstrap, read-only preflight and explicit worker startup
 
 Authorized now:
-- **Gate 3.16 — Issue #56 — Protected operator bootstrap, read-only preflight and explicit worker startup**
+- **Gate 3.17 — Issue #58 — Deterministic Source Resolver and acquisition submission boundary**
 
 Not authorized yet:
 - direct Panta OpenList acquisition verifier;
 - direct acquisition Copy creation/upsert;
-- real 115 account acceptance, production deployment, public API/UI, and Gate 3.17+ work beyond operator bootstrap;
+- real 115/OpenList/IndexCore live-account acceptance, production deployment, public API/UI, and Gate 3.18+ work;
+- provider-specific source rewriting/truncation without a new decision;
 - API/UI;
 - auth/quota/share;
 - Agent implementation;

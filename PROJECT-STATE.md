@@ -6,7 +6,7 @@
 
 **MVP implementation — Gate 3**
 
-Gate 0, Gate 1, and Gate 2 are formally accepted and closed. Gate 3.1 through Gate 3.15 are accepted and merged. Gate 3.16 is authorized and in progress.
+Gate 0, Gate 1, and Gate 2 are formally accepted and closed. Gate 3.1 through Gate 3.16 are accepted and merged. Gate 3.17 is authorized and in progress.
 
 ## Accepted baseline
 
@@ -822,9 +822,9 @@ Until the relevant gate is accepted, do not implement:
 
 ## Next architect action
 
-Review Gate 3.16 PR against **Issue #56 / D-039**: protected externally injected credentials, read-only preflight distinct from explicit worker start, disabled-default/no-credential CLI safety, exact ProviderID/ConnectionID/CredentialRef and trusted Hint checks, complete schema v12, controlled PostgreSQL+local HTTP startup E2E, signal/cancellation/Close ordering, and exact-head CI.
+Review the future Gate 3.17 PR against **Issue #58 / D-040**: deterministic supported-source classification, exact source-value preservation, no network work during resolution/submission, reuse of existing Manifest creation + activation services, safe replay/partial PENDING activation semantics, no source-bearing logs, no schema change, and exact-head CI.
 
-Do not authorize real 115 account downloads, production deployment or Gate 3.17 until Gate 3.16 is accepted.
+Do not authorize real 115/OpenList/IndexCore account acceptance, production deployment or Gate 3.18 until Gate 3.17 is accepted.
 
 ## Current bounded task
 
@@ -1047,17 +1047,45 @@ Deferred: real 115 account login, production deployment, Source Resolver, public
 
 ### Gate 3.16 — Protected operator bootstrap, read-only preflight and explicit acquisition worker startup
 
-Status: **AUTHORIZED / IN PROGRESS**
+Status: **ACCEPTED**
 
-Tracking: GitHub Issue #56
+Tracking: GitHub Issue #56 / PR #57
+
+Merged:
+- reviewed exact HEAD `6a5406d4f937528f4b363035764864c1d1b07812`;
+- squash commit `88a413513a38b1fd08dbfc2755887b6fc22010eb`;
+- Architect acceptance comment `5918865491`;
+- exact-head CI run `36745763304` all three jobs SUCCESS;
+- schema unchanged at v12.
+
+Acceptance evidence:
+- ordinary CLI remains side-effect-free; operator modes reject raw credential/token CLI arguments;
+- protected Linux secret/config mount validates owner, permissions, traversal/symlink/race-sensitive file identity and bounded content;
+- read-only preflight constructs/closes the D-038 graph without Run, ClaimNext, Hint, IndexCore read or provider mutation;
+- explicit start reuses the D-037 serial worker, blocks in-process double start, handles SIGINT/SIGTERM and closes owned DB resources after Run returns;
+- controlled PG16/local HTTP E2E proves provider → Hint → Q5/Q8 Projector → exact Copy → READY only in explicit start; PG18 observation regression remains green;
+- no real 115 account action, direct OpenList acquisition verifier, schema migration, API/UI or deployment was introduced.
 
 Governing decision: D-039.
 
-Scope:
-- disabled-default CLI remains side-effect-free; explicit read-only preflight and distinct explicit worker start;
-- externally protected secrets with a documented permission model, no CLI plaintext cookie/token and no secret-bearing logs;
-- reject incomplete schema v12/active connection/Hint trust before claiming any work;
-- reuse D-038 Runtime exactly once, graceful signal/cancellation and safe pool Close;
-- controlled PostgreSQL + local HTTP startup/stop evidence; no real 115 account or new migration.
+Deferred: real 115 account download/external acceptance, deployment/image/HA, Source Resolver, API/UI, auth/quota/share, and Agent.
 
-Deferred: real 115 account download, deployment/image/HA, Source Resolver, API/UI, and Agent.
+## Current bounded task
+
+### Gate 3.17 — Deterministic Source Resolver and acquisition submission boundary
+
+Status: **AUTHORIZED / IN PROGRESS**
+
+Tracking: GitHub Issue #58
+
+Governing decision: D-040.
+
+Scope:
+- support deterministic `magnet`, `http`, `https`, and `ed2k` source classification/validation without network IO;
+- derive normalized source type while preserving the exact accepted source value byte-for-byte into Manifest and DownloadRequest;
+- reject malformed/unknown/secret-bearing HTTP userinfo inputs; do not trim/truncate/re-encode magnet parameters;
+- compose existing Manifest creation + ActivationService through one bounded submission service with stable IDs and explicit replay/PENDING-activation semantics;
+- provide a non-network staging/test submission entrypoint that enqueues only and never implicitly starts the Gate 3.16 worker;
+- no schema migration expected.
+
+Deferred: real 115/OpenList/IndexCore live acceptance, provider-specific source rewriting, auth/quota/access/share, public API/UI, Agent and production deployment.
