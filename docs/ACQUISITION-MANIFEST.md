@@ -579,3 +579,36 @@ Before a newly successful provider acquisition may advance to `AWAITING_VISIBILI
 The identity is provider-neutral. For 115, only the successful offline task's `Name` may become the result name. Provider `FileId` / `DirId` remain private to the adapter and are never used as IndexCore identity.
 
 This identity does not prove presence. Later canonical confirmation still requires IndexCore evidence.
+
+## Durable result locator before canonical confirmation
+
+D-031 adds a provider-neutral result locator before exact IndexCore confirmation.
+
+`target_path` remains the destination directory scope. It is not the acquired
+resource's complete canonical path. `expected_name` remains optional acquisition
+intent.
+
+Before provider success may progress automatically to `AWAITING_VISIBILITY`,
+Panta resolves one top-level `result_name`:
+
+```text
+valid provider-observed TaskStatus.ResultName
+        >
+Manifest.ExpectedName fallback
+        ↓
+Manifest.result_name
+```
+
+The future canonical candidate is then deterministic:
+
+```text
+Join(Manifest.target_path, Manifest.result_name)
+```
+
+Panta must never replace this locator with directory guessing, a sole/newest file,
+provider FileId/DirId, provider task reference, or an arbitrary Journal event.
+
+If no valid result name exists, provider success cannot progress automatically;
+the acquisition requires explicit recovery. A persisted `result_name` is
+immutable and replay-safe, but it is only a locator: Q5/Journal/Copy confirmation
+is still required before READY.
