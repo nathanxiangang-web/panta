@@ -19,7 +19,9 @@ const (
 	MaxSourceTypeLength   = 64
 	MaxSourceRefLength    = 4096
 	MaxExpectedNameLength = 512
-	MaxTargetPathLength   = 2048
+	// MaxResultNameLength bounds the durable acquired-result locator.
+	MaxResultNameLength = 512
+	MaxTargetPathLength = 2048
 )
 
 var (
@@ -72,11 +74,16 @@ func (state State) Valid() bool {
 // Manifest is durable provider-neutral acquisition intent. It deliberately
 // contains no provider task reference or Job execution/lease state.
 type Manifest struct {
-	ID                     ManifestID
-	UserID                 *UserID
-	SourceType             string
-	SourceRef              string
-	ExpectedName           *string
+	ID           ManifestID
+	UserID       *UserID
+	SourceType   string
+	SourceRef    string
+	ExpectedName *string
+	// ResultName is the durable provider-stage acquired-result locator (D-032). It
+	// is separate from ExpectedName: intent is never rewritten by provider
+	// execution. It is nil until a provider success resolves it, and immutable
+	// afterwards.
+	ResultName             *string
 	TargetStorageBindingID storage.BindingID
 	TargetPath             string
 	AssetID                *catalog.AssetID
@@ -241,6 +248,7 @@ func validateCreateRequest(request CreateManifestRequest) (string, error) {
 		!validRequiredText(request.SourceRef, MaxSourceRefLength) {
 		return "", ErrInvalidArgument
 	}
+	// D-032 keeps expected_name as request intent and fallback only.
 	if request.ExpectedName != nil && !validRequiredText(*request.ExpectedName, MaxExpectedNameLength) {
 		return "", ErrInvalidArgument
 	}
@@ -271,7 +279,13 @@ func ValidateManifest(manifest Manifest) error {
 		manifest.CreatedAt.IsZero() || manifest.UpdatedAt.IsZero() {
 		return ErrInvalidArgument
 	}
+	// D-032 keeps expected_name as request intent, so it is only bounded text.
 	if manifest.ExpectedName != nil && !validRequiredText(*manifest.ExpectedName, MaxExpectedNameLength) {
+		return ErrInvalidArgument
+	}
+	// result_name is the durable provider-stage locator, so it must be one valid
+	// direct child.
+	if err := ValidateResultNamePointer(manifest.ResultName); err != nil {
 		return ErrInvalidArgument
 	}
 	if manifest.UserID != nil && *manifest.UserID == "" || manifest.JobID != nil && *manifest.JobID == "" ||

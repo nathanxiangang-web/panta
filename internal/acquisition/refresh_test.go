@@ -699,91 +699,72 @@ func TestRefreshHonoursContextCancellation(t *testing.T) {
 	}
 }
 
-// --- Issue #41 tests 26-28: the Gate 3.9 identity guard on the Gate 3.8 Hint ----
+// --- Issue #42 (D-032): Gate 3.8 is scoped only by root and target_path ---------
 
-// TestRefreshRefusesHintWithoutFrozenExpectedName is the Gate 3.9 boundary: an
-// AWAITING_VISIBILITY Manifest with no durable direct-child identity must not be
-// handed to the IndexCore observation pipeline, because advancing it would create
-// an AWAITING_CANONICAL Manifest that canonical confirmation could never resolve
-// without guessing.
-func TestRefreshRefusesHintWithoutFrozenExpectedName(t *testing.T) {
+// TestRefreshHintIgnoresAcquiredResultLocator proves the Mutation Hint does not
+// depend on the acquired-result locator. D-032 keeps Gate 3.8 scoped only by
+// indexcore_root_id + target_path: the Hint tells IndexCore to refresh this
+// directory scope, and the locator is not an input to that handoff.
+func TestRefreshHintIgnoresAcquiredResultLocator(t *testing.T) {
 	tests := []struct {
-		name         string
-		expectedName *string
+		name       string
+		resultName *string
 	}{
-		{name: "missing identity", expectedName: nil},
-		{name: "blank identity", expectedName: stringPointer("   ")},
-		{name: "path separator", expectedName: stringPointer("a/b")},
-		{name: "backslash separator", expectedName: stringPointer(`a\b`)},
-		{name: "dot", expectedName: stringPointer(".")},
-		{name: "dot dot", expectedName: stringPointer("..")},
-		{name: "NUL", expectedName: stringPointer("a\x00b")},
+		{name: "no locator yet", resultName: nil},
+		{name: "valid locator", resultName: stringPointer("MiXeD Case & Unicode 影片.mkv")},
+		{name: "intent-only, no locator", resultName: nil},
 	}
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {
 			fixture := newRefreshFixture(t, func(_ *storage.Binding, manifest *acquisition.Manifest, _ *jobs.Job) {
-				manifest.ExpectedName = test.expectedName
+				manifest.ResultName = test.resultName
 			})
-			if _, err := fixture.step.Submit(context.Background(), fixture.request()); !errors.Is(err, acquisition.ErrExpectedNameRequired) {
-				t.Fatalf("Submit() error = %v, want ErrExpectedNameRequired", err)
+			result, err := fixture.step.Submit(context.Background(), fixture.request())
+			if err != nil {
+				t.Fatalf("Submit() error = %v, want the Hint to be unaffected by the locator", err)
 			}
-			// No Hint may be sent and nothing may advance.
-			if calls, _ := fixture.port.snapshot(); calls != 0 {
-				t.Fatalf("Hint calls = %d, want 0 without a frozen identity", calls)
+			if !result.Changed || result.Manifest.State != acquisition.StateAwaitingCanonical {
+				t.Fatalf("result = %+v", result)
 			}
-			manifest, _, plans := fixture.store.snapshots()
-
-			if plans != 0 {
-				t.Fatalf("store commits = %d, want 0", plans)
+			calls, requests := fixture.port.snapshot()
+			if calls != 1 {
+				t.Fatalf("Hint calls = %d, want exactly 1", calls)
 			}
-			if manifest.State != acquisition.StateAwaitingVisibility {
-				t.Fatalf("Manifest state = %q, want AWAITING_VISIBILITY to remain", manifest.State)
+			hint := requests[0]
+			if hint.RootID != "root-115-a" {
+				t.Fatalf("root_id = %q, want the binding indexcore_root_id", hint.RootID)
 			}
-			if manifest.State == acquisition.StateAwaitingCanonical {
-				t.Fatal("an unidentifiable Manifest advanced to AWAITING_CANONICAL")
+			if hint.ScopeKey != "/downloads/movies" {
+				t.Fatalf("scope_key = %q, want Manifest.target_path", hint.ScopeKey)
+			}
+			if hint.Reason != acquisition.MutationHintPossibleChange {
+				t.Fatalf("reason = %q, want POSSIBLE_CHANGE", hint.Reason)
+			}
+			// Neither the locator nor the intent may travel in the Hint.
+			for _, leaked := range []string{"MiXeD", "影片", "acquired"} {
+				if strings.Contains(hint.ScopeKey, leaked) || strings.Contains(hint.RootID, leaked) {
+					t.Fatalf("%q leaked into the Hint", leaked)
+				}
 			}
 		})
 	}
 }
 
-// TestRefreshHintMappingUnaffectedByExpectedName proves the frozen D-029 Hint
-// mapping is unchanged: the identity is never sent, and the root/scope/reason stay
-// exactly as before.
-func TestRefreshHintMappingUnaffectedByExpectedName(t *testing.T) {
+// TestRefreshDoesNotRewriteExpectedNameOrResultName proves the Gate 3.8 handoff
+// leaves both identity fields exactly as they were.
+func TestRefreshDoesNotRewriteExpectedNameOrResultName(t *testing.T) {
 	fixture := newRefreshFixture(t, func(_ *storage.Binding, manifest *acquisition.Manifest, _ *jobs.Job) {
-		manifest.ExpectedName = stringPointer("MiXeD Case & Unicode 影片.mkv")
+		manifest.ExpectedName = stringPointer("request-intent.mkv")
+		manifest.ResultName = stringPointer("observed-result.mkv")
 	})
-	result, err := fixture.step.Submit(context.Background(), fixture.request())
-	if err != nil {
+	if _, err := fixture.step.Submit(context.Background(), fixture.request()); err != nil {
 		t.Fatalf("Submit() error = %v", err)
 	}
-	if !result.Changed || result.Manifest.State != acquisition.StateAwaitingCanonical {
-		t.Fatalf("result = %+v", result)
-	}
-	calls, requests := fixture.port.snapshot()
-	if calls != 1 {
-		t.Fatalf("Hint calls = %d, want exactly 1", calls)
-	}
-	hint := requests[0]
-	if hint.RootID != "root-115-a" {
-		t.Fatalf("root_id = %q, want the binding indexcore_root_id", hint.RootID)
-	}
-	if hint.ScopeKey != "/downloads/movies" {
-		t.Fatalf("scope_key = %q, want Manifest.target_path", hint.ScopeKey)
-	}
-	if hint.Reason != acquisition.MutationHintPossibleChange {
-		t.Fatalf("reason = %q, want POSSIBLE_CHANGE", hint.Reason)
-	}
-	// The identity must never travel in the Hint: IndexCore refreshes the directory.
-	if strings.Contains(hint.ScopeKey, "MiXeD") || strings.Contains(hint.RootID, "MiXeD") {
-		t.Fatal("expected_name leaked into the Hint")
-	}
-	if strings.Contains(hint.ScopeKey, "影片") {
-		t.Fatal("expected_name leaked into the Hint scope_key")
-	}
-	// The durable identity is still frozen on the Manifest after the handoff.
 	manifest, _, _ := fixture.store.snapshots()
-	if manifest.ExpectedName == nil || *manifest.ExpectedName != "MiXeD Case & Unicode 影片.mkv" {
-		t.Fatalf("frozen identity = %v, want it preserved verbatim", manifest.ExpectedName)
+	if manifest.ExpectedName == nil || *manifest.ExpectedName != "request-intent.mkv" {
+		t.Fatalf("expected_name = %v, want the request intent untouched", manifest.ExpectedName)
+	}
+	if manifest.ResultName == nil || *manifest.ResultName != "observed-result.mkv" {
+		t.Fatalf("result_name = %v, want the locator untouched", manifest.ResultName)
 	}
 }

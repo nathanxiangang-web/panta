@@ -16,7 +16,7 @@ import (
 )
 
 const acquisitionManifestColumns = `
-manifest_id::text, user_id::text, source_type, source_ref, expected_name,
+manifest_id::text, user_id::text, source_type, source_ref, expected_name, result_name,
 target_storage_binding_id::text, target_path, asset_id::text, release_id::text,
 variant_id::text, job_id::text, state, created_at, updated_at`
 
@@ -91,7 +91,7 @@ func scanAcquisitionManifest(row pgx.Row) (acquisition.Manifest, error) {
 	var manifestID, bindingID string
 	var userID, assetID, releaseID, variantID, jobID sql.NullString
 	err := row.Scan(
-		&manifestID, &userID, &manifest.SourceType, &manifest.SourceRef, &manifest.ExpectedName,
+		&manifestID, &userID, &manifest.SourceType, &manifest.SourceRef, &manifest.ExpectedName, &manifest.ResultName,
 		&bindingID, &manifest.TargetPath, &assetID, &releaseID, &variantID, &jobID,
 		&manifest.State, &manifest.CreatedAt, &manifest.UpdatedAt,
 	)

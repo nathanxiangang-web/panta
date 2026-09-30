@@ -154,9 +154,12 @@ func (adapter *Adapter) StartDownload(ctx context.Context, request contracts.Dow
 // task pages and maps its status. Provider success is never translated into
 // Manifest READY.
 //
-// D-031: a succeeded task additionally reports the exact acquired top-level object
-// name, taken verbatim from the provider task. Only OfflineTask.Name crosses this
-// boundary; FileId and DirId stay inside the adapter and never become identity.
+// D-032: a succeeded task additionally reports the acquired top-level object name
+// when the provider exposes a usable one. A blank or absent upstream name is NOT a
+// download failure: it yields SUCCEEDED with no result name, so the acquisition
+// layer can fall back to the request intent. A present but malformed name is a
+// contract violation and fails closed. Only OfflineTask.Name crosses this boundary;
+// FileId and DirId stay provider-private.
 func (adapter *Adapter) DownloadStatus(ctx context.Context, reference contracts.TaskReference) (contracts.TaskStatus, error) {
 	if err := ctx.Err(); err != nil {
 		return contracts.TaskStatus{}, err
@@ -181,14 +184,16 @@ func (adapter *Adapter) DownloadStatus(ctx context.Context, reference contracts.
 		// Pending, running, failed, and canceled tasks carry no result identity.
 		return status, nil
 	}
-	// A succeeded task without a usable name is not usable success: reporting it
-	// would let an unidentifiable acquisition advance.
-	resultName := task.Name
-	if err := contracts.ValidateDirectChildName(resultName); err != nil {
-		return contracts.TaskStatus{}, fmt.Errorf("%w: succeeded task %s reported name %q: %w",
-			ErrTaskResultNameMissing, reference.Value, resultName, err)
+	// The download succeeded. A blank name means the provider exposed no usable
+	// locator; that is a missing identifier, not a failed acquisition.
+	if strings.TrimSpace(task.Name) == "" {
+		return status, nil
 	}
-	status.Result = &contracts.DownloadResult{Name: resultName}
+	if err := contracts.ValidateDirectChildName(task.Name); err != nil {
+		return contracts.TaskStatus{}, fmt.Errorf("%w: succeeded task %s reported name %q: %w",
+			ErrTaskResultNameInvalid, reference.Value, task.Name, err)
+	}
+	status.Result = &contracts.DownloadResult{Name: task.Name}
 	return status, nil
 }
 

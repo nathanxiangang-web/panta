@@ -100,34 +100,35 @@ FOR UPDATE`, string(plan.ManifestID)))
 		return acquisition.ProviderOutcomeResult{}, err
 	}
 
-	// Resolve the D-031 durable identity for a provider success from the locked
+	// Resolve the D-032 durable locator for a provider success from the locked
 	// Manifest and the provider-reported name. This happens before any mutation so a
-	// conflict or a missing identity fails closed with nothing written.
-	var resolvedExpectedName *string
+	// conflict or a missing locator fails closed with nothing written. expected_name
+	// is read as the fallback and is never rewritten.
+	var resolvedResultName *string
 	if plan.Outcome == acquisition.ProviderOutcomeSucceeded {
-		name, err := resolveExpectedNameForSuccess(manifest, plan)
+		name, err := resolveResultNameForSuccess(manifest, plan)
 		if err != nil {
 			return acquisition.ProviderOutcomeResult{}, err
 		}
-		resolvedExpectedName = name
+		resolvedResultName = name
 	}
 
 	var updatedManifest acquisition.Manifest
-	if resolvedExpectedName != nil {
-		// Mutation 1a (provider success): freeze the direct-child identity and advance
-		// the milestone in one statement, so identity and state can never diverge. The
-		// expected_name predicate fences a concurrent conflicting resolution, and the
-		// IS NOT DISTINCT FROM comparison is null-safe for a currently-NULL name.
+	if resolvedResultName != nil {
+		// Mutation 1a (provider success): freeze the locator and advance the milestone
+		// in one statement, so the locator and the state can never diverge. The
+		// result_name predicate fences a concurrent conflicting resolution, and the
+		// IS NOT DISTINCT FROM comparison is null-safe for a currently-NULL locator.
 		updatedManifest, err = scanAcquisitionManifest(tx.QueryRow(ctx, `
 UPDATE acquisition_manifests
 SET state = $3,
-    expected_name = $5,
+    result_name = $5,
     updated_at = $4
 WHERE manifest_id = $1 AND state = $2
-  AND expected_name IS NOT DISTINCT FROM $6
+  AND result_name IS NOT DISTINCT FROM $6
 RETURNING `+acquisitionManifestColumns,
 			string(plan.ManifestID), string(acquisition.StateActive), string(plan.ManifestState),
-			plan.Now, *resolvedExpectedName, manifest.ExpectedName))
+			plan.Now, *resolvedResultName, manifest.ResultName))
 	} else {
 		// Mutation 1b (every other outcome): advance the milestone without touching
 		// identity. When the outcome keeps the Manifest at ACTIVE, updated_at is
@@ -172,17 +173,17 @@ RETURNING `+acquisitionManifestColumns,
 	return acquisition.ProviderOutcomeResult{Manifest: updatedManifest, Job: updatedJob, Changed: true}, nil
 }
 
-// resolveExpectedNameForSuccess applies the frozen D-031 identity rules to the
-// locked Manifest and the provider-reported name, and reports whether the durable
-// value must change.
+// resolveResultNameForSuccess applies the frozen D-032 locator rules to the locked
+// Manifest and the provider-reported name.
 //
-// The caller applies the frozen rules through acquisition.ResolveProviderResultName,
-// so the transaction and the domain share one decision table.
-func resolveExpectedNameForSuccess(
+// The transaction and the domain share one decision table through
+// acquisition.ResolveResultName, so persistence cannot drift from the contract.
+func resolveResultNameForSuccess(
 	manifest acquisition.Manifest,
 	plan acquisition.ProviderOutcomePlan,
 ) (*string, error) {
-	resolved, _, err := acquisition.ResolveProviderResultName(manifest.ExpectedName, plan.ProviderResultName)
+	resolved, _, err := acquisition.ResolveResultName(
+		manifest.ResultName, plan.ProviderResultName, manifest.ExpectedName)
 	if err != nil {
 		return nil, err
 	}

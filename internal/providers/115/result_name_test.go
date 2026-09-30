@@ -82,16 +82,52 @@ func TestDownloadResultNameMapsProviderNameByteForByte(t *testing.T) {
 }
 
 // ---------------------------------------------------------------------------
-// 6: a succeeded task with a blank or invalid name fails closed
-// ---------------------------------------------------------------------------
-
-func TestDownloadResultNameBlankOrInvalidNameFailsClosed(t *testing.T) {
-	cases := []struct {
+// D-032 separates a MISSING name from a MALFORMED one. A blank or absent upstream
+// name means the provider exposed no locator, so the task is still a legitimate
+// SUCCEEDED download with no result name, and the acquisition layer may fall back to
+// the request intent. A present-but-malformed name is a contract violation and fails
+// closed. Treating a blank name as a download failure would misreport a successful
+// 115 download as failed.
+func TestDownloadResultNameBlankNameIsSucceededWithoutLocator(t *testing.T) {
+	for _, test := range []struct {
 		label string
 		name  string
 	}{
 		{label: "empty", name: ""},
-		{label: "blank", name: "   "},
+		{label: "spaces", name: "   "},
+		{label: "tab", name: "\t"},
+		{label: "newline", name: "\n"},
+	} {
+		t.Run(test.label, func(t *testing.T) {
+			backend := newFakeBackend()
+			backend.listByPage[1] = resultNamePage(OfflineTask{
+				InfoHash: resultNameTaskHash,
+				Status:   statusDone,
+				Name:     test.name,
+			})
+			adapter := newAdapter(t, backend)
+
+			status, err := adapter.DownloadStatus(context.Background(), contracts.TaskReference{Value: resultNameTaskHash})
+			if err != nil {
+				t.Fatalf("DownloadStatus() error = %v with a blank name %q, want a legitimate SUCCEEDED task",
+					err, test.name)
+			}
+			if status.State != contracts.TaskStateSucceeded {
+				t.Fatalf("State = %q with a blank name, want SUCCEEDED", status.State)
+			}
+			// No usable locator was observed, so none may be invented.
+			if status.Result != nil {
+				t.Fatalf("Result = %#v with a blank name, want nil so the intent fallback applies", status.Result)
+			}
+		})
+	}
+}
+
+func TestDownloadResultNameMalformedNameFailsClosed(t *testing.T) {
+	cases := []struct {
+		label string
+		name  string
+	}{
 		{label: "dot", name: "."},
 		{label: "dot dot", name: ".."},
 		{label: "forward slash", name: "a/b"},
@@ -113,21 +149,16 @@ func TestDownloadResultNameBlankOrInvalidNameFailsClosed(t *testing.T) {
 
 			status, err := adapter.DownloadStatus(context.Background(), contracts.TaskReference{Value: resultNameTaskHash})
 			if err == nil {
-				t.Fatalf("DownloadStatus() error = nil with name %q, want a fail-closed error", test.name)
+				t.Fatalf("DownloadStatus() error = nil with malformed name %q, want a fail-closed error", test.name)
 			}
-			if !errors.Is(err, ErrTaskResultNameMissing) {
-				t.Fatalf("DownloadStatus() error = %v, want errors.Is(err, ErrTaskResultNameMissing)", err)
+			if !errors.Is(err, ErrTaskResultNameInvalid) {
+				t.Fatalf("DownloadStatus() error = %v, want errors.Is(err, ErrTaskResultNameInvalid)", err)
 			}
 			if !errors.Is(err, contracts.ErrInvalidDownloadResultName) {
 				t.Fatalf("DownloadStatus() error = %v, want it to attribute contracts.ErrInvalidDownloadResultName", err)
 			}
-			// It must not look like a usable success: no succeeded state and no
-			// result identity, so an unidentifiable acquisition cannot advance.
-			if status.State == contracts.TaskStateSucceeded {
-				t.Fatalf("State = %q with name %q, want NOT a usable success", status.State, test.name)
-			}
 			if status.Result != nil {
-				t.Fatalf("Result = %#v with name %q, want nil", status.Result, test.name)
+				t.Fatalf("Result = %#v with malformed name %q, want nil", status.Result, test.name)
 			}
 		})
 	}

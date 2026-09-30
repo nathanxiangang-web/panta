@@ -578,45 +578,50 @@ Before a newly successful provider acquisition may advance to `AWAITING_VISIBILI
 
 The identity is provider-neutral. For 115, only the successful offline task's `Name` may become the result name. Provider `FileId` / `DirId` remain private to the adapter and are never used as IndexCore identity.
 
-This identity does not prove presence. Later canonical confirmation still requires IndexCore evidence.
+This provider-neutral result name does not prove presence. Later canonical confirmation still requires IndexCore evidence.
 
 ### Durable enforcement
 
-Migration `0011_expected_name_identity.sql` hardens the identity as one direct-child
-segment. For any non-null `expected_name` it requires nonblank text within the
-512-rune bound, and rejects `/`, `\`, `.` and `..`. Exact spelling, case, and
-interior whitespace are preserved: the value is never trimmed, path-cleaned, or
-normalized, because a provider-reported name has to round-trip byte for byte to stay
-usable as identity.
+Migration `0011_expected_name_intent.sql` scopes `expected_name` explicitly as
+request intent: it re-asserts only the bounded-text guarantee (nonblank, 512-rune
+limit) and deliberately adds no separator or dot-component rule, because an intention
+is not a path segment.
 
-A second constraint fences every **new or updated** `AWAITING_VISIBILITY`,
-`AWAITING_CANONICAL`, or `READY` row behind a non-null `expected_name`. It is added
-`NOT VALID` on purpose: a database predating Gate 3.9 may already hold such a row
-without an identity, and that row is explicit recovery debt rather than a migration
-failure. PostgreSQL still enforces a `NOT VALID` check for every new and updated row,
-so all future writes are fenced while historical rows stay untouched and inspectable.
+Migration `0012_acquisition_result_name.sql` adds the durable locator column
+`result_name text NULL` and constrains it as exactly one direct-child segment:
+nonblank, within the 512-rune limit, free of `/`, `\`, `.` and `..`. There is no
+database default, because a default would fabricate a locator for rows that never
+observed one.
 
-The identity commits inside the provider-success transaction, in the same statement
-that advances the milestone, so the name and the state can never diverge. Concurrent
-handoffs proposing different names produce exactly one durable winner; the loser
-fails closed as a conflict. An exact success replay returns `Changed=false` and
-rewrites neither the name nor the timestamps.
+Exact spelling, case, and interior whitespace are preserved for the locator: the
+value is never trimmed, path-cleaned, or normalized, because a provider-reported name
+has to round-trip byte for byte to stay usable as identity.
 
-### The scope handoff still does not carry the identity
+The locator commits inside the provider-success transaction, in the same statement
+that advances the milestone, so the locator and the state can never diverge. The
+statement fences on the previously read `result_name`, so concurrent handoffs
+proposing different names produce exactly one durable winner and every loser fails
+closed. Once persisted the locator is immutable: a same-name replay returns
+`Changed=false` and rewrites neither the name nor the timestamps, while a different
+name conflicts.
+
+Existing rows keep `result_name = NULL`. No historical row is backfilled and no guess
+is recorded, because a locator that was never observed cannot be recovered from
+timing, Journal order, or a directory listing. Enforcing that automatic progression
+carries a resolved locator belongs to the provider-success transition, not to the
+migration: the database cannot know which historical rows were legitimately observed.
+
+### The scope handoff does not carry the locator
 
 `indexcore_root_id` and `target_path` remain the only Hint inputs, and the reason is
-still `POSSIBLE_CHANGE`. `expected_name` is **not** sent: IndexCore refreshes the
-containing directory.
-
-Instead, the identity gates the handoff. An `AWAITING_VISIBILITY` Manifest without a
-valid frozen `expected_name` must not be handed to the observation pipeline at all,
-because advancing it would create an `AWAITING_CANONICAL` Manifest that canonical
-confirmation could never resolve without guessing. Such a Manifest fails closed
-before any Hint is sent.
+still `POSSIBLE_CHANGE`. Neither `result_name` nor `expected_name` is sent: the Hint
+tells IndexCore to refresh this directory scope, and the locator is not an input to
+that handoff. The scope handoff is not gated on the locator; exact canonical
+resolution using `result_name` is a later gate.
 
 ## Durable result locator before canonical confirmation
 
-D-031 adds a provider-neutral result locator before exact IndexCore confirmation.
+D-032 adds a provider-neutral result locator before exact IndexCore confirmation.
 
 `target_path` remains the destination directory scope. It is not the acquired
 resource's complete canonical path. `expected_name` remains optional acquisition
