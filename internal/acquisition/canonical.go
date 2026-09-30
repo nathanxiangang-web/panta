@@ -347,9 +347,18 @@ func (confirmation *CanonicalConfirmation) load(ctx context.Context, request Can
 
 // validateCanonicalJob proves the Job is the linked ACQUISITION Job holding the
 // fenced RUNNING lease for the expected claim generation.
+//
+// The Manifest -> Job direction is checked explicitly, mirroring
+// isCommittedRefresh. The Job-side link alone is not sufficient: a Manifest whose
+// JobID points at a different Job is corrupt, and finalizing it would finalize an
+// acquisition against a Job it is not durably attached to.
 func validateCanonicalJob(manifest Manifest, job jobs.Job, request CanonicalRequest) error {
 	if job.ID != request.JobID {
 		return fmt.Errorf("%w: requested %s, read %s", ErrCanonicalFence, request.JobID, job.ID)
+	}
+	if manifest.JobID == nil || *manifest.JobID != request.JobID {
+		return fmt.Errorf("%w: Manifest %s is not linked to Job %s",
+			ErrCanonicalFence, manifest.ID, request.JobID)
 	}
 	if err := ValidateLinkedAcquisitionJob(manifest.ID, job); err != nil {
 		return fmt.Errorf("%w: %w", ErrCanonicalFence, err)
