@@ -18,12 +18,12 @@ import (
 
 const jobColumns = `
 job_id::text, job_type, payload, state, idempotency_key,
-attempt_count, max_attempts, next_attempt_at, lease_owner, lease_expires_at,
+claim_attempts, attempt_count, max_attempts, next_attempt_at, lease_owner, lease_expires_at,
 last_error, created_at, updated_at, started_at, finished_at`
 
 const updatedJobColumns = `
 job.job_id::text, job.job_type, job.payload, job.state, job.idempotency_key,
-job.attempt_count, job.max_attempts, job.next_attempt_at, job.lease_owner, job.lease_expires_at,
+job.claim_attempts, job.attempt_count, job.max_attempts, job.next_attempt_at, job.lease_owner, job.lease_expires_at,
 job.last_error, job.created_at, job.updated_at, job.started_at, job.finished_at`
 
 const expiredLeaseMessage = "running lease expired; provider reconciliation required"
@@ -62,8 +62,8 @@ func insertJob(ctx context.Context, db jobQueryRow, request jobs.CreateRequest) 
 	row := db.QueryRow(ctx, `
 INSERT INTO jobs (
     job_id, job_type, payload, state, idempotency_key,
-    attempt_count, max_attempts, created_at, updated_at
-) VALUES ($1, $2, $3, 'QUEUED', $4, 0, $5, now(), now())
+    claim_attempts, attempt_count, max_attempts, created_at, updated_at
+) VALUES ($1, $2, $3, 'QUEUED', $4, 0, 0, $5, now(), now())
 RETURNING `+jobColumns,
 		string(request.ID), request.Type, string(request.Payload), request.IdempotencyKey, request.MaxAttempts,
 	)
@@ -89,6 +89,14 @@ func (repository *JobRepository) GetByIdempotencyKey(ctx context.Context, key st
 	return repository.getOne(ctx, "SELECT "+jobColumns+" FROM jobs WHERE idempotency_key = $1", key)
 }
 
+// ClaimNext claims the next schedulable Job and increments its claim generation.
+//
+// The failure budget deliberately does not gate claiming: a RETRY_WAIT row is
+// always schedulable once next_attempt_at is due. A single Job now carries the
+// whole acquisition workflow across provider, visibility, and canonical stages,
+// so gating on the failure budget would strand it in RETRY_WAIT forever after
+// enough stage transitions, or block the visibility stage right after a
+// successful download.
 func (repository *JobRepository) ClaimNext(ctx context.Context, request jobs.ClaimRequest) (jobs.Job, error) {
 	if strings.TrimSpace(request.Owner) == "" || request.Now.IsZero() || request.LeaseDuration <= 0 {
 		return jobs.Job{}, jobs.ErrInvalidArgument
@@ -97,18 +105,15 @@ func (repository *JobRepository) ClaimNext(ctx context.Context, request jobs.Cla
 WITH candidate AS (
     SELECT job_id
     FROM jobs
-    WHERE attempt_count < max_attempts
-      AND (
-          state = 'QUEUED'
-          OR (state = 'RETRY_WAIT' AND next_attempt_at <= $1)
-      )
+    WHERE state = 'QUEUED'
+       OR (state = 'RETRY_WAIT' AND next_attempt_at <= $1)
     ORDER BY COALESCE(next_attempt_at, created_at), created_at, job_id
     FOR UPDATE SKIP LOCKED
     LIMIT 1
 )
 UPDATE jobs AS job
 SET state = 'RUNNING',
-    attempt_count = job.attempt_count + 1,
+    claim_attempts = job.claim_attempts + 1,
     next_attempt_at = NULL,
     lease_owner = $2,
     lease_expires_at = CURRENT_TIMESTAMP + ($3 * interval '1 microsecond'),
@@ -135,9 +140,9 @@ func (repository *JobRepository) RenewLease(ctx context.Context, request jobs.Re
 UPDATE jobs AS job
 SET lease_expires_at = CURRENT_TIMESTAMP + ($5 * interval '1 microsecond'), updated_at = $4
 WHERE job_id = $1 AND state = 'RUNNING' AND lease_owner = $2
-  AND attempt_count = $3 AND lease_expires_at > CURRENT_TIMESTAMP
+  AND claim_attempts = $3 AND lease_expires_at > CURRENT_TIMESTAMP
 RETURNING `+updatedJobColumns,
-		string(request.ID), request.Owner, request.ExpectedAttempt, request.Now, request.LeaseDuration.Microseconds(),
+		string(request.ID), request.Owner, request.ExpectedClaim, request.Now, request.LeaseDuration.Microseconds(),
 	)
 	return repository.finishLeaseMutation(ctx, request.ID, row, "renew lease")
 }
@@ -151,8 +156,8 @@ UPDATE jobs AS job
 SET state = 'SUCCEEDED', lease_owner = NULL, lease_expires_at = NULL,
     next_attempt_at = NULL, last_error = NULL, finished_at = $4, updated_at = $4
 WHERE job_id = $1 AND state = 'RUNNING' AND lease_owner = $2
-  AND attempt_count = $3 AND lease_expires_at > CURRENT_TIMESTAMP
-RETURNING `+updatedJobColumns, string(request.ID), request.Owner, request.ExpectedAttempt, request.Now)
+  AND claim_attempts = $3 AND lease_expires_at > CURRENT_TIMESTAMP
+RETURNING `+updatedJobColumns, string(request.ID), request.Owner, request.ExpectedClaim, request.Now)
 	return repository.finishLeaseMutation(ctx, request.ID, row, "succeed job")
 }
 
@@ -165,28 +170,31 @@ UPDATE jobs AS job
 SET state = 'FAILED', lease_owner = NULL, lease_expires_at = NULL,
     next_attempt_at = NULL, last_error = $5, finished_at = $4, updated_at = $4
 WHERE job_id = $1 AND state = 'RUNNING' AND lease_owner = $2
-  AND attempt_count = $3 AND lease_expires_at > CURRENT_TIMESTAMP
-RETURNING `+updatedJobColumns, string(request.ID), request.Owner, request.ExpectedAttempt, request.Now, request.Error)
+  AND claim_attempts = $3 AND lease_expires_at > CURRENT_TIMESTAMP
+RETURNING `+updatedJobColumns, string(request.ID), request.Owner, request.ExpectedClaim, request.Now, request.Error)
 	return repository.finishLeaseMutation(ctx, request.ID, row, "fail job")
 }
 
+// RetryAt schedules a same-stage retry and consumes the failure budget. This is
+// the only operation that increments the failure count or consults max_attempts.
 func (repository *JobRepository) RetryAt(ctx context.Context, request jobs.RetryRequest) (jobs.Job, error) {
 	if err := validateFailureRequest(request.FailureRequest); err != nil || request.RetryAt.IsZero() {
 		return jobs.Job{}, jobs.ErrInvalidArgument
 	}
 	row := repository.pool.QueryRow(ctx, `
 UPDATE jobs AS job
-SET state = CASE WHEN attempt_count >= max_attempts THEN 'FAILED' ELSE 'RETRY_WAIT' END,
+SET state = CASE WHEN job.attempt_count + 1 >= job.max_attempts THEN 'FAILED' ELSE 'RETRY_WAIT' END,
+    attempt_count = job.attempt_count + 1,
     lease_owner = NULL,
     lease_expires_at = NULL,
-    next_attempt_at = CASE WHEN attempt_count >= max_attempts THEN NULL ELSE $6::timestamptz END,
+    next_attempt_at = CASE WHEN job.attempt_count + 1 >= job.max_attempts THEN NULL ELSE $6::timestamptz END,
     last_error = $5,
-    finished_at = CASE WHEN attempt_count >= max_attempts THEN $4::timestamptz ELSE NULL END,
+    finished_at = CASE WHEN job.attempt_count + 1 >= job.max_attempts THEN $4::timestamptz ELSE NULL END,
     updated_at = $4
 WHERE job_id = $1 AND state = 'RUNNING' AND lease_owner = $2
-  AND attempt_count = $3 AND lease_expires_at > CURRENT_TIMESTAMP
+  AND claim_attempts = $3 AND lease_expires_at > CURRENT_TIMESTAMP
 RETURNING `+updatedJobColumns,
-		string(request.ID), request.Owner, request.ExpectedAttempt, request.Now, request.Error, request.RetryAt,
+		string(request.ID), request.Owner, request.ExpectedClaim, request.Now, request.Error, request.RetryAt,
 	)
 	return repository.finishLeaseMutation(ctx, request.ID, row, "schedule job retry")
 }
@@ -275,7 +283,7 @@ func (repository *JobRepository) finishLeaseMutation(ctx context.Context, id job
 }
 
 func validateLeaseRequest(request jobs.LeaseRequest) error {
-	if request.ID == "" || strings.TrimSpace(request.Owner) == "" || request.ExpectedAttempt < 1 || request.Now.IsZero() {
+	if request.ID == "" || strings.TrimSpace(request.Owner) == "" || request.ExpectedClaim < 1 || request.Now.IsZero() {
 		return jobs.ErrInvalidArgument
 	}
 	return nil
@@ -300,7 +308,7 @@ func scanJob(row rowScanner) (jobs.Job, error) {
 	var nextAttemptAt, leaseExpiresAt, startedAt, finishedAt sql.NullTime
 	err := row.Scan(
 		&id, &job.Type, &payload, &state, &idempotencyKey,
-		&job.AttemptCount, &job.MaxAttempts, &nextAttemptAt, &leaseOwner, &leaseExpiresAt,
+		&job.ClaimAttempts, &job.FailureCount, &job.MaxAttempts, &nextAttemptAt, &leaseOwner, &leaseExpiresAt,
 		&lastError, &job.CreatedAt, &job.UpdatedAt, &startedAt, &finishedAt,
 	)
 	if err != nil {

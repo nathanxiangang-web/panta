@@ -384,10 +384,140 @@ The package is covered by the architecture guard: it may import only
 `internal/providers/contracts`, the pinned driver package, and the standard
 library.
 
+## Atomic provider-stage outcome handoff
+
+Gate 3.7 commits the outcome of one fenced `RUNNING` `ACQUISITION` Job so the
+Manifest milestone and the Job state can never diverge. D-026 freezes the mapping:
+
+```text
+PROVIDER_IN_PROGRESS   Manifest ACTIVE   (unchanged)   Job RUNNING -> RETRY_WAIT
+PROVIDER_SUCCEEDED     Manifest ACTIVE -> AWAITING_VISIBILITY
+                                                      Job RUNNING -> RETRY_WAIT
+PROVIDER_FAILED        Manifest ACTIVE -> FAILED       Job RUNNING -> FAILED
+PROVIDER_CANCELED      Manifest ACTIVE -> CANCELED     Job RUNNING -> CANCELED
+PROVIDER_RECOVERY      Manifest ACTIVE -> RECOVERY_REQUIRED
+                                                      Job RUNNING -> RECOVERY_REQUIRED
+```
+
+`PROVIDER_SUCCEEDED` is explicitly **not** Job `SUCCEEDED` and not Manifest
+`READY`. The ACQUISITION Job represents the whole acquisition workflow rather than
+one provider RPC, so provider success queues the *same* Job for the later
+visibility stage. No second visibility Job is created.
+
+`internal/acquisition` owns `ProviderOutcomeService` and the `ProviderOutcomeStore`
+port. `internal/store/postgres` implements the commit in one transaction:
+lock Manifest, verify exact identity plus `ACTIVE`, lock Job, verify the frozen
+Gate 3.2 linkage plus the `RUNNING` lease fence (owner, claim generation, and
+unexpired lease authorized by database time), then mutate both rows and commit. A
+failure between the two mutations rolls both back.
+
+Job mutation semantics:
+
+```text
+RETRY_WAIT         lease cleared, next_attempt_at = RetryAt, finished_at NULL,
+                   claim generation and failure budget preserved. This
+                   intentionally does not consult max_attempts: the Job is being
+                   queued for the next acquisition stage, not retried for the same
+                   work.
+FAILED             lease cleared, next_attempt_at NULL, last_error required,
+                   finished_at set, claim generation and failure budget preserved
+CANCELED           lease cleared, next_attempt_at NULL, finished_at set, and no
+                   provider files or tasks are touched by this persistence step
+RECOVERY_REQUIRED  lease cleared, next_attempt_at NULL, last_error required,
+                   finished_at stays NULL because recovery is non-terminal, and
+                   the Job is not claimable by ordinary ClaimNext
+```
+
+When the outcome keeps the Manifest at `ACTIVE`, its `updated_at` is deliberately
+preserved: nothing about the Manifest changed, so rewriting the timestamp would be
+a spurious durable write.
+
+Replay is idempotent, and replay detection keys on the **durable Manifest + Job
+pairing** rather than on the Manifest state alone. `PROVIDER_IN_PROGRESS`
+legitimately leaves the Manifest `ACTIVE`, so keying on "Manifest is not ACTIVE"
+would misclassify its own committed outcome as a fresh handoff and fail its replay.
+If the Manifest already holds the exact milestone this outcome produces and the
+linked Job already holds its exact D-026 pairing, the call returns the durable
+records with `Changed=false` and rewrites nothing. A different proposed outcome
+after a committed one fails closed with a typed error, and two callers with the
+same fenced claim generation produce at most one committed change.
+
+## Claim generation versus failure budget
+
+One ACQUISITION Job now carries the whole acquisition workflow, so the same Job is
+claimed repeatedly: for provider polling, then visibility, then canonical stages.
+A single counter could not serve both the stale-worker fence and the failure retry
+budget, because stage transitions would consume the budget and could strand a Job in
+`RETRY_WAIT` forever — or block the visibility stage immediately after a successful
+download.
+
+Migration `0010_job_claim_generation.sql` therefore splits the two:
+
+```text
+claim_attempts  monotonically increasing claim generation
+                every successful claim increments it
+                never bounded
+                the fencing token: ExpectedClaim must equal it
+
+attempt_count   failure/retry budget (jobs.Job.FailureCount)
+                only RetryAt increments it
+                bounded by max_attempts
+                governs terminal FAILED
+```
+
+Consequences:
+
+```text
+ClaimNext       claims QUEUED, or RETRY_WAIT once next_attempt_at is due, and
+                never refuses a claim because the failure budget is spent
+RetryAt         the only operation that consumes the budget; it still terminates
+                the Job at max_attempts
+handoff         never changes the claim generation or the failure budget
+stale worker    a superseded generation cannot mutate state, even when the owner
+                string still matches
+```
+
+The existing `attempt_count` column name is retained for compatibility; the Go field
+is `jobs.Job.FailureCount` so the distinction is explicit at every call site.
+
+### Upgrading an existing database
+
+Before version 10, `attempt_count` **was** the claim generation, because every claim
+incremented it. The migration therefore moves the legacy value rather than dropping
+it:
+
+```sql
+UPDATE jobs
+SET claim_attempts = attempt_count,
+    attempt_count = 0;
+```
+
+Adding the column with a default of 0 and leaving `attempt_count` in place would have
+been wrong in two ways:
+
+```text
+legacy generation N rewound to 0   -> an already superseded worker passes the fence
+N historical claims read as N failures -> the next real failure terminates the Job
+                                          early once N reaches max_attempts
+```
+
+Two upgrade tests pin this against a real schema applied at version 9 and then
+upgraded: `TestPostgresJobClaimGenerationUpgradeMigratesLegacyAttemptCount` (a
+`RETRY_WAIT` legacy row keeps generation `N`, reports `FailureCount = 0`, advances to
+`N+1` on the next claim, and generation `N` is then fenced) and
+`TestPostgresJobClaimGenerationUpgradeKeepsLiveLeaseFence` (a `RUNNING` legacy row
+keeps working at its migrated generation and its first genuine failure counts as
+`1`, not `N+1`).
+
+One consequence is deliberate: a Job that had already recorded failures under the
+pre-10 counter starts with a fresh failure budget, because that counter never
+measured failures. Only generation is preserved, since only generation has a
+fencing meaning that must stay monotonic.
+
 ## Deferred capabilities
 
-Source Resolver/provider syntax normalization, the Job worker loop, Manifest
-milestone transition to `AWAITING_VISIBILITY`, OpenList visibility verification,
-Mutation Hint/scoped refresh, canonical READY orchestration, auth/quota, and
-API/UI are separately authorized later work. A real secret backend, the 115
-ShareProvider, and 115-specific retry policy are also deferred.
+Source Resolver/provider syntax normalization, the Job worker loop, OpenList
+visibility verification, Mutation Hint/scoped refresh, the AWAITING_CANONICAL
+transition, canonical READY confirmation, auth/quota, and API/UI are separately
+authorized later work. A real secret backend, the 115 ShareProvider, and
+115-specific retry policy are also deferred.
