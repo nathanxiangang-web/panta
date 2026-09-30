@@ -37,7 +37,7 @@ UI polish is not an MVP acceptance criterion.
               │                  │
               │             115 Adapter
               │                  │
-              │          MCP / official API
+              │       115driver v1.3.5
               │                  ↓
               │              115Drive
               │                  │
@@ -285,8 +285,9 @@ Needed MVP operations:
 - create task;
 - get task status;
 - cancel task if supported;
-- retry/recreate according to provider semantics;
 - capabilities.
+
+Retry/recreate policy belongs to the Panta application/Job Engine. A concrete Downloader adapter must not blindly recreate an external task on its own.
 
 ### 8.3 ShareProvider
 
@@ -296,7 +297,7 @@ Needed MVP operations:
 - revoke share;
 - capabilities.
 
-115 is one adapter implementing these ports.
+115 is the first adapter proving these ports. As of Gate 3.6, only the concrete 115 Downloader slice is implemented; Share remains deferred.
 
 ## 9. Acquisition flow
 
