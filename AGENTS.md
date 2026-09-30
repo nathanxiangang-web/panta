@@ -108,6 +108,25 @@ root_id + target_path + result_name
 - reuse the existing projector in bounded one-page steps;
 - `result_copy_id` is the durable final acquisition result reference.
 
+## One-claim acquisition dispatcher
+
+Current authorized Gate 3.11: Issue #46 / D-034.
+
+Dispatch exactly ONE stage per claimed ACQUISITION Job using persisted Manifest.State:
+
+```text
+ACTIVE              -> provider Execute + atomic ProviderOutcome
+AWAITING_VISIBILITY -> trusted IndexCore Mutation Hint step
+AWAITING_CANONICAL  -> exact canonical confirmation step
+terminal pair       -> committed no-op / replay
+```
+
+- Use Job owner and ClaimAttempts fencing, with PostgreSQL database-time check at every durable stage write.
+- After an accepted handoff return; never execute the next stage in the same claim.
+- Never convert provider uncertainty into blind StartDownload retry.
+- Normal pending status does not consume failure budget.
+- Do not implement a continuous worker daemon / automatic ClaimNext scheduler yet.
+
 ## Job safety
 
 - `claim_attempts` = monotonic claim-generation fence.
