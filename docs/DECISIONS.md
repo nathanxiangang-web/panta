@@ -877,3 +877,20 @@ Rules:
 - no direct Panta-to-OpenList acquisition visibility validation.
 
 Gate 3.11 builds a bounded one-claim coordinator and controlled multi-claim evidence **without** an automatic scheduler/worker daemon. Later runtime wiring and cadence require a separately authorized Gate. No new database migration is required by this decision.
+
+## D-035 — ACQUISITION-only claiming and atomic linked expired-lease recovery
+
+**Status:** Accepted
+
+Gate 3.11's one-claim dispatcher is accepted. Before enabling an autonomous worker, two Job Engine integration invariants are required:
+
+- An acquisition worker may claim only `Job.Type == ACQUISITION`, using an atomic type-scoped claim that never leases and discards unrelated Job types. Preserve ClaimAttempts, failure-budget and DB-time lease semantics of the existing Job Engine.
+- An expired RUNNING ACQUISITION Job is a **linked Manifest + Job recovery transition**, not a standalone Job status update.
+
+Automatic expired acquisition recovery is allowed only for a fully validated `ACTIVE`, `AWAITING_VISIBILITY`, or `AWAITING_CANONICAL` Manifest linked to the correct ACQUISITION Job. Lock Manifest before Job, check expiry by PostgreSQL time, then atomically set both to `RECOVERY_REQUIRED`; leave malformed/missing/conflicting pairs unchanged for explicit diagnosis.
+
+The generic expired-lease sweep must not independently change the state of an ACQUISITION Job, or it would violate the accepted D-034 terminal-pair contract.
+
+No provider task reference, START_RESERVED fence, result_name, result_copy_id, claim generation or failure count is rewritten by this recovery. Nothing automatically repeats a provider mutation.
+
+Gate 3.12 implements these two bounded prerequisites with PostgreSQL evidence. It does not authorize a polling worker daemon, process runtime wiring, OpenList verification, Source Resolver, API or UI.
