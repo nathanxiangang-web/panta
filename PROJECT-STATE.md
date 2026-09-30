@@ -6,7 +6,7 @@
 
 **MVP implementation — Gate 3**
 
-Gate 0, Gate 1, and Gate 2 are formally accepted and closed. Gate 3.1 through Gate 3.8 are accepted and merged. Gate 3.9 is authorized and in progress.
+Gate 0, Gate 1, and Gate 2 are formally accepted and closed. Gate 3.1 through Gate 3.9 are accepted and merged. Gate 3.10 is authorized and in progress.
 
 ## Accepted baseline
 
@@ -743,9 +743,25 @@ Explicitly deferred:
 
 ### Gate 3.9 — Durable acquisition result locator before canonical confirmation
 
-Status: **AUTHORIZED / IN PROGRESS**
+Status: **ACCEPTED**
 
-Tracking: GitHub Issue #42
+Tracking: GitHub Issue #42 / PR #43
+
+Merged:
+- squash commit `784435d855c3c038131c94d3bebf59e3a9a97f15`
+
+Acceptance evidence:
+- separate immutable Manifest.result_name added via migration v11;
+- expected_name remains request intent/fallback and is never rewritten by provider execution;
+- valid provider ResultName takes precedence over ExpectedName;
+- blank provider name permits only a promotable direct-child ExpectedName fallback;
+- malformed nonblank provider name fails closed;
+- result_name + AWAITING_VISIBILITY + RETRY_WAIT commit atomically;
+- same result_name replay is idempotent and different-value replay fails closed;
+- 115 FileId/DirId remain provider-private;
+- Gate 3.8 root/scope-only Hint semantics remain unchanged;
+- GitHub Actions run `36675499153` fully green;
+- migration history compatible at version 11.
 
 Scope:
 - extend provider-neutral TaskStatus with optional ResultName;
@@ -806,6 +822,33 @@ Until the relevant gate is accepted, do not implement:
 
 ## Next architect action
 
-Review the Gate 3.9 PR against **Issue #42 / D-032**: separate immutable Manifest.result_name from request-time ExpectedName, provider ResultName precedence with ExpectedName fallback, atomic result_name + AWAITING_VISIBILITY + RETRY_WAIT persistence, migration v11, and full Gate 1/2/3.1-3.8 regression.
+Review the Gate 3.10 PR against **Issue #44 / D-033**: exact Q5 candidate resolution, ambiguity fail-closed semantics, bounded reuse of the existing Journal Projector, exact PRESENT Copy verification, optional monotonic Variant binding, immutable result_copy_id, atomic READY + Job SUCCEEDED finalization, migration v12, and full Gate 1/2/3.1-3.9 regression.
 
-Issue #41 is superseded / NOT PLANNED. Do not authorize Gate 3.10 until Issue #42 is accepted and merged.
+Do not authorize Gate 3.11 until Gate 3.10 is accepted and merged.
+
+
+## Current bounded task
+
+### Gate 3.10 — Canonical confirmation, projected Copy, and READY finalization
+
+Status: **AUTHORIZED / IN PROGRESS**
+
+Tracking: GitHub Issue #44
+
+Scope:
+- build exact canonical candidate path from target_path + result_name;
+- use IndexCore Q5 with default PRESENT visibility and preserve ambiguity;
+- treat zero matches / not-yet-projected Copy as normal pending RETRY_WAIT;
+- advance the existing Q8 Journal Projector by at most one bounded page;
+- require the exact PRESENT Copy by root/resource/binding;
+- optionally bind the exact Copy to Manifest.variant_id using existing monotonic classification;
+- add durable Manifest.result_copy_id via migration v12;
+- atomically finalize result_copy_id + Manifest READY + same Job SUCCEEDED;
+- no direct Copy creation from acquisition.
+
+Explicitly deferred:
+- continuous acquisition worker/scheduler;
+- Source Resolver normalization;
+- auth/quota/share/access;
+- Agent;
+- public API/UI.
