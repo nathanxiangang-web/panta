@@ -6,6 +6,7 @@ import (
 	"testing"
 
 	"github.com/nathanxiangang-web/panta/internal/platform/operator"
+	"github.com/nathanxiangang-web/panta/internal/platform/submission"
 )
 
 func TestDefaultCommandNeverLoadsRuntimeDependencies(t *testing.T) {
@@ -21,7 +22,7 @@ func TestDefaultCommandNeverLoadsRuntimeDependencies(t *testing.T) {
 
 func TestOperatorCommandRejectsUnrequestedModesAndRawArguments(t *testing.T) {
 	t.Setenv("PANTA_ACQUISITION_WORKER_ENABLED", "true")
-	for _, args := range [][]string{{"--cookie=unsafe"}, {"start-acquisition", "--hint-token=unsafe"}, {"preflight-acquisition", "--start"}} {
+	for _, args := range [][]string{{"--cookie=unsafe"}, {"start-acquisition", "--hint-token=unsafe"}, {"preflight-acquisition", "--start"}, {"submit-acquisition", "magnet:?xt=unsafe"}} {
 		if err := runWithContext(context.Background(), args); !errors.Is(err, operator.ErrInvalidAction) {
 			t.Fatalf("args %v accepted: %v", args, err)
 		}
@@ -32,5 +33,9 @@ func TestOperatorCommandRejectsUnrequestedModesAndRawArguments(t *testing.T) {
 	t.Setenv("PANTA_ACQUISITION_WORKER_ENABLED", "false")
 	if err := runWithContext(context.Background(), []string{"preflight-acquisition"}); !errors.Is(err, operator.ErrInvalidAction) {
 		t.Fatalf("disabled preflight = %v", err)
+	}
+	t.Setenv("PANTA_ACQUISITION_SUBMISSION_FILE", "")
+	if err := runWithContext(context.Background(), []string{"submit-acquisition"}); !errors.Is(err, submission.ErrInvalidRequestFile) {
+		t.Fatalf("submission without protected request = %v", err)
 	}
 }

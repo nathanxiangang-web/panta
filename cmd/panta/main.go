@@ -11,6 +11,7 @@ import (
 	"github.com/nathanxiangang-web/panta/internal/app"
 	"github.com/nathanxiangang-web/panta/internal/platform/config"
 	"github.com/nathanxiangang-web/panta/internal/platform/operator"
+	"github.com/nathanxiangang-web/panta/internal/platform/submission"
 )
 
 func main() {
@@ -30,7 +31,7 @@ func runWithContext(ctx context.Context, args []string) error {
 	if len(args) > 1 {
 		return operator.ErrInvalidAction
 	}
-	if len(args) == 1 && args[0] != string(operator.Preflight) && args[0] != string(operator.Start) {
+	if len(args) == 1 && args[0] != string(operator.Preflight) && args[0] != string(operator.Start) && args[0] != "submit-acquisition" {
 		return operator.ErrInvalidAction
 	}
 	cfg, err := config.Load()
@@ -38,6 +39,13 @@ func runWithContext(ctx context.Context, args []string) error {
 		return errors.New("invalid process configuration")
 	}
 	if len(args) == 1 {
+		if args[0] == "submit-acquisition" {
+			result, err := submission.Run(ctx, cfg, os.Getenv("PANTA_ACQUISITION_SUBMISSION_FILE"))
+			if result.Status != "" {
+				log.Printf("acquisition submission status=%s manifest_id=%s job_id=%s", result.Status, result.ManifestID, result.JobID)
+			}
+			return err
+		}
 		err := operator.Run(ctx, operator.Action(args[0]), cfg, os.Getenv("PANTA_ACQUISITION_BOOTSTRAP_FILE"), nil)
 		if err != nil {
 			return err
