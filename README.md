@@ -40,6 +40,7 @@ Panta v0.1 must prove five things:
 
 ## Project documents
 
+- [AI Developer Entry Point](AGENTS.md) — mandatory repository entry for coding/review agents
 - [AI Architecture Memory](docs/AI-ARCHITECTURE-MEMORY.md) — read first for current invariants / anti-drift rules
 - [MVP Blueprint](docs/MVP-BLUEPRINT.md)
 - [Project Context](PROJECT-CONTEXT.md)
