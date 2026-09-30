@@ -138,6 +138,19 @@ Active Gate 3.12: Issue #48 / D-035.
 - Do not drop START_RESERVED / task references or automatically repeat 115 StartDownload.
 - Maintain ClaimAttempts generation and FailureCount semantics, no worker daemon or process runtime in Gate 3.12.
 
+## One-shot runner
+
+Current Gate 3.13 / Issue #50 / D-036 allows a single explicit application RunOnce tick:
+
+```text
+bounded expired-acquisition linked-pair recovery
+  → if healthy: ClaimNextByType(ACQUISITION) at most once
+  → StageDispatcher.Dispatch at most once
+  → return a typed IDLE / RECOVERY / STAGE result
+```
+
+Recovery debt stops new claims in the tick. Stage errors must not be translated into generic Job-only Fail/Succeed/RetryAt writes; that would desynchronize the Manifest. Pass the actual claimed owner/ClaimAttempts. No autonomous worker daemon, timer, process startup wiring or live provider-credential integration yet.
+
 ## Job safety
 
 - `claim_attempts` = monotonic claim-generation fence.
