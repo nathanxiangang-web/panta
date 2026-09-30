@@ -59,6 +59,24 @@ Never derive these from each other:
 - `indexcore_root_id` — IndexCore canonical root;
 - `manifest.target_path` — scope inside the selected root/binding.
 
+
+## Acquisition result identity
+
+Before provider success may advance a new acquisition beyond the provider stage:
+
+```text
+StorageBinding.indexcore_root_id
++ Manifest.target_path
++ Manifest.expected_name
+```
+
+- `target_path` is the directory scope refreshed by IndexCore.
+- `expected_name` is one exact direct child under that directory.
+- It may be absent at Manifest creation, but must be frozen before `AWAITING_VISIBILITY`.
+- For 115, only successful `OfflineTask.Name` may supply it.
+- Never use provider FileId/DirId, OpenList paths, Journal order, timing, newest-item, or only-item heuristics as a substitute.
+- This identity still does not prove canonical presence; IndexCore confirmation remains required.
+
 ## Job safety
 
 - `claim_attempts` = monotonic claim-generation fence.
