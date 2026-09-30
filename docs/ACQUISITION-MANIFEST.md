@@ -480,6 +480,40 @@ stale worker    a superseded generation cannot mutate state, even when the owner
 The existing `attempt_count` column name is retained for compatibility; the Go field
 is `jobs.Job.FailureCount` so the distinction is explicit at every call site.
 
+### Upgrading an existing database
+
+Before version 10, `attempt_count` **was** the claim generation, because every claim
+incremented it. The migration therefore moves the legacy value rather than dropping
+it:
+
+```sql
+UPDATE jobs
+SET claim_attempts = attempt_count,
+    attempt_count = 0;
+```
+
+Adding the column with a default of 0 and leaving `attempt_count` in place would have
+been wrong in two ways:
+
+```text
+legacy generation N rewound to 0   -> an already superseded worker passes the fence
+N historical claims read as N failures -> the next real failure terminates the Job
+                                          early once N reaches max_attempts
+```
+
+Two upgrade tests pin this against a real schema applied at version 9 and then
+upgraded: `TestPostgresJobClaimGenerationUpgradeMigratesLegacyAttemptCount` (a
+`RETRY_WAIT` legacy row keeps generation `N`, reports `FailureCount = 0`, advances to
+`N+1` on the next claim, and generation `N` is then fenced) and
+`TestPostgresJobClaimGenerationUpgradeKeepsLiveLeaseFence` (a `RUNNING` legacy row
+keeps working at its migrated generation and its first genuine failure counts as
+`1`, not `N+1`).
+
+One consequence is deliberate: a Job that had already recorded failures under the
+pre-10 counter starts with a fresh failure budget, because that counter never
+measured failures. Only generation is preserved, since only generation has a
+fencing meaning that must stay monotonic.
+
 ## Deferred capabilities
 
 Source Resolver/provider syntax normalization, the Job worker loop, OpenList
