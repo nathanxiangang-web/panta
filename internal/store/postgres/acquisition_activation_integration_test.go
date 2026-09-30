@@ -13,6 +13,7 @@ import (
 	"github.com/jackc/pgx/v5/pgxpool"
 
 	"github.com/nathanxiangang-web/panta/internal/acquisition"
+	"github.com/nathanxiangang-web/panta/internal/catalog"
 	"github.com/nathanxiangang-web/panta/internal/jobs"
 	"github.com/nathanxiangang-web/panta/internal/storage"
 )
@@ -36,7 +37,7 @@ func TestPostgresAcquisitionActivationContract(t *testing.T) {
 		t.Fatalf("missing Manifest error = %v", err)
 	}
 
-	manifest := seedActivationManifest(t, ctx, manifestRepository, bindingID, "25000000-0000-4000-8000-000000000010", acquisition.StatePending, nil)
+	manifest := seedActivationManifest(t, ctx, pool, manifestRepository, bindingID, "25000000-0000-4000-8000-000000000010", acquisition.StatePending, nil)
 	request := acquisition.ActivateRequest{
 		ManifestID: manifest.ID, JobID: "25000000-0000-4000-8000-000000000011", MaxAttempts: 3,
 	}
@@ -83,7 +84,7 @@ func TestPostgresAcquisitionActivationRejectsInvalidMilestonesAndCorruptLinks(t 
 	}
 	for index, state := range invalidStates {
 		manifestID := acquisition.ManifestID(fmt.Sprintf("25100000-0000-4000-8000-%012d", 10+index))
-		seedActivationManifest(t, ctx, manifestRepository, bindingID, manifestID, state, nil)
+		seedActivationManifest(t, ctx, pool, manifestRepository, bindingID, manifestID, state, nil)
 		_, err := service.Activate(ctx, acquisition.ActivateRequest{
 			ManifestID:  manifestID,
 			JobID:       jobs.JobID(fmt.Sprintf("25100000-0000-4000-8000-%012d", 30+index)),
@@ -125,7 +126,7 @@ func TestPostgresAcquisitionActivationRejectsInvalidMilestonesAndCorruptLinks(t 
 	}
 	for _, test := range corruptions {
 		jobID := seedContractJob(t, ctx, pool, test.jobID, test.manifestID, test.jobType, test.key, test.payload)
-		manifest := seedActivationManifest(t, ctx, manifestRepository, bindingID, test.manifestID, acquisition.StateActive, &jobID)
+		manifest := seedActivationManifest(t, ctx, pool, manifestRepository, bindingID, test.manifestID, acquisition.StateActive, &jobID)
 		if _, err := service.Activate(ctx, activationRequest(manifest.ID, "25100000-0000-4000-8000-000000000090")); !errors.Is(err, acquisition.ErrCorruptActivation) {
 			t.Fatalf("%s error = %v", test.name, err)
 		}
@@ -138,7 +139,7 @@ func TestPostgresAcquisitionActivationRejectsInvalidMilestonesAndCorruptLinks(t 
 	if _, err := pool.Exec(ctx, "ALTER TABLE acquisition_manifests DROP CONSTRAINT acquisition_manifests_job_id_fkey"); err != nil {
 		t.Fatalf("drop test-only foreign key: %v", err)
 	}
-	seedActivationManifest(t, ctx, manifestRepository, bindingID, missingManifestID, acquisition.StateActive, &missingJobID)
+	seedActivationManifest(t, ctx, pool, manifestRepository, bindingID, missingManifestID, acquisition.StateActive, &missingJobID)
 	if _, err := service.Activate(ctx, activationRequest(missingManifestID, "25100000-0000-4000-8000-000000000072")); !errors.Is(err, acquisition.ErrCorruptActivation) {
 		t.Fatalf("missing linked Job error = %v", err)
 	}
@@ -171,7 +172,7 @@ func TestPostgresConcurrentAcquisitionActivationConverges(t *testing.T) {
 			if test.sameID {
 				secondJobID = firstJobID
 			}
-			seedActivationManifest(t, ctx, manifestRepository, bindingID, manifestID, acquisition.StatePending, nil)
+			seedActivationManifest(t, ctx, pool, manifestRepository, bindingID, manifestID, acquisition.StatePending, nil)
 
 			start := make(chan struct{})
 			results := make(chan activationCallResult, 2)
@@ -217,7 +218,7 @@ func TestPostgresAcquisitionActivationRollsBackBetweenJobAndManifest(t *testing.
 	bindingID := storage.BindingID("25300000-0000-4000-8000-000000000001")
 	seedStorageBinding(t, ctx, pool, bindingID, "activation-rollback-root")
 	manifestRepository, _ := NewAcquisitionManifestRepository(pool)
-	manifest := seedActivationManifest(t, ctx, manifestRepository, bindingID, "25300000-0000-4000-8000-000000000010", acquisition.StatePending, nil)
+	manifest := seedActivationManifest(t, ctx, pool, manifestRepository, bindingID, "25300000-0000-4000-8000-000000000010", acquisition.StatePending, nil)
 	activationRepository, _ := NewAcquisitionActivationRepository(pool)
 	injected := errors.New("forced failure after Job insert")
 	activationRepository.afterJobInsert = func(context.Context, pgx.Tx) error { return injected }
@@ -261,16 +262,30 @@ func activationExpectedName(state acquisition.State) *string {
 		return nil
 	}
 }
-func seedActivationManifest(t *testing.T, ctx context.Context, repository *AcquisitionManifestRepository, bindingID storage.BindingID, id acquisition.ManifestID, state acquisition.State, jobID *jobs.JobID) acquisition.Manifest {
+func seedActivationManifest(t *testing.T, ctx context.Context, pool *pgxpool.Pool, repository *AcquisitionManifestRepository, bindingID storage.BindingID, id acquisition.ManifestID, state acquisition.State, jobID *jobs.JobID) acquisition.Manifest {
 	t.Helper()
 	now := time.Date(2020, 1, 1, 0, 0, 0, 0, time.UTC)
 	manifest := acquisition.Manifest{
 		ID: id, SourceType: "opaque", SourceRef: "opaque://source", TargetStorageBindingID: bindingID,
 		TargetPath: "/downloads/item", JobID: jobID, State: state, CreatedAt: now, UpdatedAt: now,
-		// Gate 3.9 D-032: request intent is seeded as ordinary fixture data; a Manifest
-		// frozen direct-child identity, so this seed stays a valid later-state row and
-		// the test keeps proving only the activation-state rejection.
+		// A later-state row carries request intent as ordinary fixture data.
 		ExpectedName: activationExpectedName(state),
+	}
+	// D-033: a READY row must carry its result Copy, so seed a real one. The point of
+	// this test is the activation-state rejection, not a malformed result link.
+	if state == acquisition.StateReady {
+		copyID := catalog.CopyID("25100000-0000-4000-8000-0000000000f0")
+		if _, err := pool.Exec(ctx, `
+INSERT INTO copies (
+    copy_id, variant_id, indexcore_root_id, indexcore_resource_id,
+    storage_binding_id, availability, created_at, updated_at
+) VALUES ($1, NULL, $2, $3, $4, 'PRESENT', $5, $5)
+ON CONFLICT (copy_id) DO NOTHING`,
+			string(copyID), "activation-result-root", "activation-result-resource",
+			string(bindingID), now); err != nil {
+			t.Fatalf("seed result Copy for READY Manifest %s: %v", id, err)
+		}
+		manifest.ResultCopyID = &copyID
 	}
 	if err := repository.CreateManifest(ctx, manifest); err != nil {
 		t.Fatalf("CreateManifest(%s) error = %v", id, err)

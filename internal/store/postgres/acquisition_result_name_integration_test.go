@@ -70,7 +70,7 @@ func newResultNamePgFixture(t *testing.T) (context.Context, *pgxpool.Pool, *Prov
 		t.Fatalf("NewMigrator() error = %v", err)
 	}
 	status, err := migrator.Apply(ctx)
-	if err != nil || !status.Compatible || status.CurrentVersion != 11 {
+	if err != nil || !status.Compatible || status.CurrentVersion != 12 {
 		t.Fatalf("Apply() = %#v, %v", status, err)
 	}
 	bindingID := storage.BindingID("39000000-0000-4000-8000-000000000000")
@@ -1080,7 +1080,7 @@ INSERT INTO acquisition_manifests (
 
 // --- 12: the v10 -> v11 upgrade preserves history without guessing -------------
 
-func TestPostgresResultNameMigrationV10ToV11PreservesHistory(t *testing.T) {
+func TestPostgresResultNameMigrationV11ToV12PreservesHistory(t *testing.T) {
 	ctx := context.Background()
 	pool := integrationPool(t, ctx)
 	resetTestSchema(t, ctx, pool)
@@ -1089,34 +1089,36 @@ func TestPostgresResultNameMigrationV10ToV11PreservesHistory(t *testing.T) {
 	if err != nil {
 		t.Fatalf("migrations.All() error = %v", err)
 	}
-	legacy := make([]migrations.Migration, 0, 10)
+	legacy := make([]migrations.Migration, 0, 11)
 	for _, migration := range history {
-		if migration.Version <= 10 {
+		if migration.Version <= 11 {
 			legacy = append(legacy, migration)
 		}
 	}
-	if len(legacy) != 10 {
-		t.Fatalf("legacy history has %d migrations, want 10", len(legacy))
+	if len(legacy) != 11 {
+		t.Fatalf("legacy history has %d migrations, want 11", len(legacy))
 	}
-	if last := legacy[len(legacy)-1].Version; last != 10 {
+	if last := legacy[len(legacy)-1].Version; last != 11 {
 		t.Fatalf("legacy history ends at version %d, want 10", last)
 	}
 	legacyMigrator := &Migrator{pool: pool, migrations: legacy}
 	legacyStatus, err := legacyMigrator.Apply(ctx)
-	if err != nil || !legacyStatus.Compatible || legacyStatus.CurrentVersion != 10 {
-		t.Fatalf("apply through version 10 = %#v, %v", legacyStatus, err)
+	if err != nil || !legacyStatus.Compatible || legacyStatus.CurrentVersion != 11 {
+		t.Fatalf("apply through version 11 = %#v, %v", legacyStatus, err)
 	}
 
-	var resultNameColumnExists bool
+	// Gate 3.10 advances v11 -> v12 by adding result_copy_id. result_name already
+	// exists at v11, and result_copy_id must not.
+	var resultCopyColumnExists bool
 	if err := pool.QueryRow(ctx, `
 SELECT EXISTS (
     SELECT 1 FROM information_schema.columns
-    WHERE table_schema = 'public' AND table_name = 'acquisition_manifests' AND column_name = 'result_name'
-)`).Scan(&resultNameColumnExists); err != nil {
+    WHERE table_schema = 'public' AND table_name = 'acquisition_manifests' AND column_name = 'result_copy_id'
+)`).Scan(&resultCopyColumnExists); err != nil {
 		t.Fatalf("inspect pre-upgrade columns: %v", err)
 	}
-	if resultNameColumnExists {
-		t.Fatal("result_name already exists before the version 11 upgrade")
+	if resultCopyColumnExists {
+		t.Fatal("result_copy_id already exists before the version 12 upgrade")
 	}
 
 	bindingID := storage.BindingID("39000000-0000-4000-8000-000000000000")
@@ -1131,7 +1133,7 @@ INSERT INTO acquisition_manifests (
     target_path, state, created_at, updated_at
 ) VALUES ($1, 'opaque-source', 'opaque-ref', $2, $3, '/downloads/legacy', 'AWAITING_CANONICAL', $4, $4)`,
 		manifestID, legacyExpectedName, string(bindingID), now); err != nil {
-		t.Fatalf("seed version 10 Manifest: %v", err)
+		t.Fatalf("seed version 11 Manifest: %v", err)
 	}
 
 	var beforeExpectedName, beforeState string
@@ -1139,13 +1141,13 @@ INSERT INTO acquisition_manifests (
 	if err := pool.QueryRow(ctx, `
 SELECT expected_name, state, updated_at FROM acquisition_manifests WHERE manifest_id = $1`,
 		manifestID).Scan(&beforeExpectedName, &beforeState, &beforeUpdatedAt); err != nil {
-		t.Fatalf("read version 10 Manifest: %v", err)
+		t.Fatalf("read version 11 Manifest: %v", err)
 	}
 	if beforeExpectedName != legacyExpectedName {
-		t.Fatalf("version 10 expected_name = %q, want %q", beforeExpectedName, legacyExpectedName)
+		t.Fatalf("version 11 expected_name = %q, want %q", beforeExpectedName, legacyExpectedName)
 	}
 	if beforeState != string(acquisition.StateAwaitingCanonical) {
-		t.Fatalf("version 10 state = %q, want %q", beforeState, acquisition.StateAwaitingCanonical)
+		t.Fatalf("version 11 state = %q, want %q", beforeState, acquisition.StateAwaitingCanonical)
 	}
 
 	migrator, err := NewMigrator(pool)
@@ -1154,24 +1156,24 @@ SELECT expected_name, state, updated_at FROM acquisition_manifests WHERE manifes
 	}
 	upgraded, err := migrator.Apply(ctx)
 	if err != nil {
-		t.Fatalf("apply version 11: %v", err)
+		t.Fatalf("apply version 12: %v", err)
 	}
-	if !upgraded.Compatible || upgraded.CurrentVersion != 11 || upgraded.LatestVersion != 11 {
+	if !upgraded.Compatible || upgraded.CurrentVersion != 12 || upgraded.LatestVersion != 12 {
 		t.Fatalf("upgrade status = %#v", upgraded)
 	}
 
-	var afterResultName sql.NullString
+	var afterResultCopyID sql.NullString
 	var afterExpectedName, afterState string
 	var afterUpdatedAt time.Time
 	if err := pool.QueryRow(ctx, `
-SELECT result_name, expected_name, state, updated_at
+SELECT result_copy_id, expected_name, state, updated_at
 FROM acquisition_manifests
-WHERE manifest_id = $1`, manifestID).Scan(&afterResultName, &afterExpectedName, &afterState, &afterUpdatedAt); err != nil {
+WHERE manifest_id = $1`, manifestID).Scan(&afterResultCopyID, &afterExpectedName, &afterState, &afterUpdatedAt); err != nil {
 		t.Fatalf("read upgraded Manifest: %v", err)
 	}
-	if afterResultName.Valid {
-		t.Fatalf("result_name = %q after the upgrade, want NULL: migration 0011 backfills and guesses nothing",
-			afterResultName.String)
+	if afterResultCopyID.Valid {
+		t.Fatalf("result_copy_id = %q after the upgrade, want NULL: migration 0012 backfills and guesses nothing",
+			afterResultCopyID.String)
 	}
 	if afterExpectedName != legacyExpectedName {
 		t.Fatalf("expected_name = %q after the upgrade, want %q byte for byte", afterExpectedName, legacyExpectedName)
@@ -1185,10 +1187,10 @@ WHERE manifest_id = $1`, manifestID).Scan(&afterResultName, &afterExpectedName, 
 
 	var backfilled int
 	if err := pool.QueryRow(ctx, `
-SELECT count(*) FROM acquisition_manifests WHERE result_name IS NOT NULL`).Scan(&backfilled); err != nil {
-		t.Fatalf("count backfilled locators: %v", err)
+SELECT count(*) FROM acquisition_manifests WHERE result_copy_id IS NOT NULL`).Scan(&backfilled); err != nil {
+		t.Fatalf("count backfilled result links: %v", err)
 	}
 	if backfilled != 0 {
-		t.Fatalf("migration 0011 backfilled %d row(s), want 0", backfilled)
+		t.Fatalf("migration 0012 backfilled %d row(s), want 0", backfilled)
 	}
 }

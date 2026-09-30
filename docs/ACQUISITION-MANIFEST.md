@@ -648,7 +648,7 @@ migration: the database cannot know which historical rows were legitimately obse
 still `POSSIBLE_CHANGE`. Neither `result_name` nor `expected_name` is sent: the Hint
 tells IndexCore to refresh this directory scope, and the locator is not an input to
 that handoff. The scope handoff is not gated on the locator; exact canonical
-resolution using `result_name` is a later gate.
+resolution using `result_name` is Gate 3.10 (see below).
 
 `target_path` remains the destination directory scope. It is not the acquired
 resource's complete canonical path. `expected_name` remains optional acquisition
@@ -678,3 +678,100 @@ If no valid result name exists, provider success cannot progress automatically;
 the acquisition requires explicit recovery. A persisted `result_name` is
 immutable and replay-safe, but it is only a locator: Q5/Journal/Copy confirmation
 is still required before READY.
+
+## Canonical confirmation and READY finalization
+
+D-033 closes the acquisition loop. `result_name` is the pre-canonical locator; once
+IndexCore canonical truth and Panta Journal projection agree, the acquisition is
+anchored to one stable Panta Copy.
+
+```text
+Manifest AWAITING_CANONICAL + fenced RUNNING ACQUISITION Job
+        ↓
+candidate_path = Join(Manifest.target_path, Manifest.result_name)
+        ↓
+Q5 exact known-path resolution
+        ↓
+one PRESENT canonical resource
+        ↓
+bounded existing Q8 Journal Projector progress
+        ↓
+exact PRESENT Copy by indexcore_root_id + indexcore_resource_id
+        ↓
+optional monotonic Copy -> Manifest.variant_id binding
+        ↓
+Manifest READY + result_copy_id, Job SUCCEEDED
+```
+
+The durable result identity is therefore:
+
+```text
+Manifest.result_copy_id -> Panta Copy
+                        -> indexcore_root_id
+                        -> indexcore_resource_id
+                        -> storage_binding_id
+```
+
+`result_copy_id` is historical evidence, not live state: a later rename, move, or
+availability change never rewrites it, so acquisition history is never re-derived by
+guessing from a path.
+
+### One bounded invocation, no loop
+
+One canonical-confirmation invocation performs exactly one Q5 resolution, at most one
+bounded projector page, one exact Copy read, and one atomic finalization. It never
+loops internally. If the target Copy is not yet projected, the same Job returns to
+`RETRY_WAIT` and the next claim continues. Acquisition never sits in a
+`while Copy not found: scan Journal` loop.
+
+### Resolution rules
+
+```text
+0 Q5 matches                         -> normal pending work, Job RETRY_WAIT
+1 PRESENT exact match                -> continue to Projector / Copy
+ambiguous = true                     -> never guessed, requires recovery
+> 1 matches                          -> never guessed, requires recovery
+```
+
+The single match must echo the exact requested root and path, and must be PRESENT. The
+candidate is never resolved by taking the first, the newest, or the closest match,
+because IndexCore defines a path as a coordinate rather than an identity. Copy
+projection alone is likewise not sufficient without canonical agreement.
+
+A missing Copy, and a `REMOVED` Copy, are both pending rather than failures: later
+Journal or canonical evidence may still change them. A Copy that is PRESENT but
+belongs to another StorageBinding, or whose physical identity does not match, fails
+closed. A Copy already classified to a different Variant is never silently
+reclassified.
+
+### Classification is not a prerequisite
+
+If a Manifest declares a `variant_id`, the confirming Copy must be monotonically
+bound to that same Variant before READY, reusing D-019. If the Manifest declares no
+Variant, an unresolved Copy still reaches READY: physical acquisition completion and
+logical classification are separate concerns.
+
+### D-017 ownership is unchanged
+
+Acquisition never creates or upserts a Copy. IndexCore Canonical → Q8 Journal → the
+Panta Projector remains the only Copy projection path. The invocation may advance
+that projector by one bounded page; it may not list directories, search, call OpenList,
+read the IndexCore database, or treat a provider file ID as a canonical identity.
+
+### Durable enforcement
+
+Migration `0012_acquisition_result_copy.sql` adds `result_copy_id uuid NULL`
+referencing `copies(copy_id)`, with no default and no historical backfill. Existing
+v11 rows keep `result_copy_id = NULL`, which is the honest state of an acquisition
+that never confirmed a canonical result.
+
+A `NOT VALID` constraint requires that a `READY` Manifest carries a result link and
+that no other state carries one, so a partially applied finalization can never be
+durable. `NOT VALID` is deliberate: a database predating Gate 3.10 may already hold a
+`READY` row without a link, and that row is explicit recovery debt rather than a
+migration failure. PostgreSQL still enforces the check for every new and updated row.
+
+The finalization transaction locks the Manifest and then its Job, re-reads the
+confirming Copy under its own row lock so a stale application-layer read cannot
+authorize READY, and commits `READY` + `result_copy_id` + `SUCCEEDED` together or not
+at all. An exact replay is idempotent; a replay proposing a different Copy conflicts.

@@ -110,7 +110,7 @@ func newRefreshIntegrationFixture(t *testing.T) (context.Context, *pgxpool.Pool,
 		t.Fatalf("NewMigrator() error = %v", err)
 	}
 	status, err := migrator.Apply(ctx)
-	if err != nil || !status.Compatible || status.CurrentVersion != 11 {
+	if err != nil || !status.Compatible || status.CurrentVersion != 12 {
 		t.Fatalf("Apply() = %#v, %v", status, err)
 	}
 	bindingID := storage.BindingID("38000000-0000-4000-8000-000000000001")
