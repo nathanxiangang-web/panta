@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"net/netip"
 	"net/url"
 	"strconv"
 	"strings"
@@ -109,6 +110,12 @@ func NewHintClient(config HintConfig) (*HintClient, error) {
 	} else if httpClient.Timeout == 0 || httpClient.Timeout > timeout {
 		httpClient.Timeout = timeout
 	}
+	// A trusted Hint endpoint is an internal write ingress on the trusted loopback
+	// namespace. Never follow a redirect: a 3xx must fail closed as an unexpected
+	// status rather than silently delivering the bearer token to another address.
+	httpClient.CheckRedirect = func(*http.Request, []*http.Request) error {
+		return http.ErrUseLastResponse
+	}
 	base.Path = joinHintBasePath(base.Path, HintPath)
 	return &HintClient{
 		endpoint:     base.String(),
@@ -129,10 +136,15 @@ func hintEffectiveTimeout(configured time.Duration) time.Duration {
 	return configured
 }
 
-// parseHintBaseURL accepts only an absolute HTTP(S) URL without a query or fragment.
-// The trusted listener is loopback-only on IndexCore's side; Panta does not weaken
-// that boundary, and a non-loopback address is a deployment decision, not a client
-// restriction.
+// parseHintBaseURL accepts only an absolute HTTP(S) URL whose host is the exact
+// literal loopback host 127.0.0.1 or ::1, with no userinfo, query, or fragment.
+//
+// This mirrors IndexCore's own P9 gate (internal/runtime/config.validateHintAddr)
+// exactly, because the trusted Hint endpoint is loopback-only by construction and
+// the request carries the Hint bearer token. Accepting any other host would let a
+// misconfiguration send that token to an arbitrary remote address. Cross-host,
+// Docker-bridge, or Kubernetes-Service topologies need their own security and
+// deployment decision; they must not be opened implicitly here.
 func parseHintBaseURL(raw string) (*url.URL, error) {
 	if raw == "" || len(raw) > hintMaximumBaseURLBytes || !utf8.ValidString(raw) ||
 		strings.ContainsRune(raw, '\x00') {
@@ -148,10 +160,41 @@ func parseHintBaseURL(raw string) (*url.URL, error) {
 	if parsed.Host == "" {
 		return nil, fmt.Errorf("%w: base URL must be absolute", ErrHintInvalidRequest)
 	}
+	// Userinfo could smuggle credentials or disguise the real authority.
+	if parsed.User != nil {
+		return nil, fmt.Errorf("%w: base URL must not carry userinfo", ErrHintInvalidRequest)
+	}
 	if parsed.RawQuery != "" || parsed.Fragment != "" {
 		return nil, fmt.Errorf("%w: base URL must not carry a query or fragment", ErrHintInvalidRequest)
 	}
+	if err := validateHintLoopbackHost(parsed.Hostname()); err != nil {
+		return nil, err
+	}
 	return parsed, nil
+}
+
+// validateHintLoopbackHost requires the exact literal loopback host. The wider
+// 127.0.0.0/8 range, IPv4-mapped IPv6 forms such as ::ffff:127.0.0.1, the
+// hostname "localhost", wildcard addresses, and every non-loopback address are
+// rejected, matching IndexCore's P9 contract.
+func validateHintLoopbackHost(host string) error {
+	switch host {
+	case "127.0.0.1", "::1":
+		return nil
+	}
+	// Give a precise reason for the near-misses, so a misconfiguration is
+	// diagnosable without widening what is accepted.
+	if strings.EqualFold(host, "localhost") {
+		return fmt.Errorf("%w: host must be the literal loopback IP 127.0.0.1 or ::1, not the hostname %q",
+			ErrHintInvalidRequest, host)
+	}
+	if address, err := netip.ParseAddr(host); err == nil {
+		if address.Is4In6() || address.IsLoopback() || address.IsUnspecified() {
+			return fmt.Errorf("%w: host %q must be exactly 127.0.0.1 or ::1", ErrHintInvalidRequest, host)
+		}
+	}
+	return fmt.Errorf("%w: host must be the literal loopback IP 127.0.0.1 or ::1, got %q",
+		ErrHintInvalidRequest, host)
 }
 
 // joinHintBasePath preserves a configured base path so a proxied deployment still

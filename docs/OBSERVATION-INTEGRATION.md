@@ -152,7 +152,26 @@ worker. If the Hint endpoint accepts work while the IndexCore runtime is disable
 Panta still must not bypass IndexCore by calling OpenList: canonical confirmation
 remains pending until the IndexCore execution path runs.
 
-The Hint listener is literal-loopback-only on IndexCore's side. For MVP deployment
+The Hint listener is literal-loopback-only on IndexCore's side, and Panta enforces
+the same rule on its side rather than trusting configuration:
+
+```text
+accepted   http://127.0.0.1:<port>   http://[::1]:<port>   https://127.0.0.1:<port>
+rejected   localhost   127.0.0.2   0.0.0.0   ::ffff:127.0.0.1
+           any non-loopback address   any hostname   any URL carrying userinfo
+```
+
+This mirrors IndexCore's own P9 gate exactly, because every Hint carries
+`Authorization: Bearer <Hint token>`: accepting an arbitrary remote address would
+let a single misconfiguration send the trusted token off-host. For MVP deployment
 Panta's backend process must be colocated within the same trusted loopback network
-namespace. Exposing the Hint transport publicly is out of scope and would need its
-own security decision.
+namespace as the Hint listener.
+
+The client also never follows an HTTP redirect. The Hint endpoint is a trusted
+internal write ingress, so Panta must reach exactly the configured endpoint; a `3xx`
+fails closed as an unexpected status instead of delivering the request and its token
+to a second address.
+
+Exposing the Hint transport publicly, or moving it across hosts, Docker bridges, or
+Kubernetes Services, is out of scope: it needs its own security and deployment
+decision and must not be opened implicitly by configuration.

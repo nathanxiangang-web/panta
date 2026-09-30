@@ -48,6 +48,7 @@ import (
 	"github.com/jackc/pgx/v5/pgxpool"
 
 	"github.com/nathanxiangang-web/panta/internal/acquisition"
+	"github.com/nathanxiangang-web/panta/internal/app"
 	"github.com/nathanxiangang-web/panta/internal/integrations/indexcore"
 	"github.com/nathanxiangang-web/panta/internal/jobs"
 	"github.com/nathanxiangang-web/panta/internal/storage"
@@ -133,10 +134,15 @@ func TestControlledIndexCoreHintObservation(t *testing.T) {
 		t.Fatalf("Hint stand-in must bind loopback, got %q", server.URL)
 	}
 
-	// A real IndexCore HintClient, not a double.
-	hintClient, err := indexcore.NewHintClient(indexcore.HintConfig{BaseURL: server.URL, Token: hintE2EToken})
+	// The PRODUCTION composition adapter, built through internal/app, not a
+	// test-local bridge. This is the whole point: if the composition boundary lacked
+	// the adapter, this test could not compile or wire the step at all.
+	hintPort, err := app.NewHintPort(app.HintConfig{BaseURL: server.URL, Token: hintE2EToken})
 	if err != nil {
-		t.Fatalf("construct real IndexCore Hint client: %v", err)
+		t.Fatalf("compose production Hint port: %v", err)
+	}
+	if hintPort == nil {
+		t.Fatal("composition returned a nil Hint port")
 	}
 
 	manifests := newHintE2EManifestReader(fixture.manifest)
@@ -146,7 +152,7 @@ func TestControlledIndexCoreHintObservation(t *testing.T) {
 		t.Fatalf("construct PostgreSQL RefreshRepository: %v", err)
 	}
 	step, err := acquisition.NewRefreshStep(
-		manifests, jobReader, hintE2EBindingReader{binding: fixture.binding}, hintE2EHintAdapter{client: hintClient}, store,
+		manifests, jobReader, hintE2EBindingReader{binding: fixture.binding}, hintPort, store,
 	)
 	if err != nil {
 		t.Fatalf("construct RefreshStep: %v", err)
@@ -690,38 +696,6 @@ func hintE2EWriteJSON(w http.ResponseWriter, status int, body any) {
 
 func hintE2EWriteError(w http.ResponseWriter, status int, code string) {
 	hintE2EWriteJSON(w, status, map[string]string{"error": code})
-}
-
-// ---------------------------------------------------------------------------
-// acquisition.MutationHintPort adapter
-// ---------------------------------------------------------------------------
-
-// hintE2EHintAdapter is the thin, test-local bridge from the acquisition-owned
-// MutationHintPort to the real IndexCore HintClient. The two packages deliberately
-// define separate HintRequest/HintReceipt types, so exactly one small adapter knows
-// both; production composition would place the same adapter at the wiring edge.
-type hintE2EHintAdapter struct {
-	client *indexcore.HintClient
-}
-
-var _ acquisition.MutationHintPort = hintE2EHintAdapter{}
-
-func (adapter hintE2EHintAdapter) SubmitMutationHint(ctx context.Context, hint acquisition.MutationHint) (acquisition.MutationHintReceipt, error) {
-	receipt, err := adapter.client.SubmitHint(ctx, indexcore.HintRequest{
-		RootID:   hint.RootID,
-		ScopeKey: hint.ScopeKey,
-		Reason:   indexcore.HintReason(hint.Reason),
-	})
-	if err != nil {
-		return acquisition.MutationHintReceipt{}, err
-	}
-	return acquisition.MutationHintReceipt{
-		Status:    receipt.Status,
-		RootID:    receipt.RootID,
-		ScopeKey:  receipt.ScopeKey,
-		WorkState: receipt.WorkState,
-		SignalSeq: receipt.SignalSeq,
-	}, nil
 }
 
 // ---------------------------------------------------------------------------
