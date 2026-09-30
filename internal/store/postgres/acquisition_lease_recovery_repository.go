@@ -15,7 +15,7 @@ import (
 
 var _ acquisition.ExpiredLeaseRecoveryStore = (*JobRepository)(nil)
 
-const maxAcquisitionRecoveryBatch = 100
+const maxAcquisitionRecoveryBatch = acquisition.MaxExpiredLeaseRecoveryBatch
 
 // MarkExpiredAcquisitionRecoveryRequired recovers up to Limit expired leases.
 // Candidate discovery takes no row lock: each pair is then locked Manifest first,
