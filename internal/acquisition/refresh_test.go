@@ -698,3 +698,92 @@ func TestRefreshHonoursContextCancellation(t *testing.T) {
 		t.Fatal("Submit() succeeded, want cancellation")
 	}
 }
+
+// --- Issue #41 tests 26-28: the Gate 3.9 identity guard on the Gate 3.8 Hint ----
+
+// TestRefreshRefusesHintWithoutFrozenExpectedName is the Gate 3.9 boundary: an
+// AWAITING_VISIBILITY Manifest with no durable direct-child identity must not be
+// handed to the IndexCore observation pipeline, because advancing it would create
+// an AWAITING_CANONICAL Manifest that canonical confirmation could never resolve
+// without guessing.
+func TestRefreshRefusesHintWithoutFrozenExpectedName(t *testing.T) {
+	tests := []struct {
+		name         string
+		expectedName *string
+	}{
+		{name: "missing identity", expectedName: nil},
+		{name: "blank identity", expectedName: stringPointer("   ")},
+		{name: "path separator", expectedName: stringPointer("a/b")},
+		{name: "backslash separator", expectedName: stringPointer(`a\b`)},
+		{name: "dot", expectedName: stringPointer(".")},
+		{name: "dot dot", expectedName: stringPointer("..")},
+		{name: "NUL", expectedName: stringPointer("a\x00b")},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			fixture := newRefreshFixture(t, func(_ *storage.Binding, manifest *acquisition.Manifest, _ *jobs.Job) {
+				manifest.ExpectedName = test.expectedName
+			})
+			if _, err := fixture.step.Submit(context.Background(), fixture.request()); !errors.Is(err, acquisition.ErrExpectedNameRequired) {
+				t.Fatalf("Submit() error = %v, want ErrExpectedNameRequired", err)
+			}
+			// No Hint may be sent and nothing may advance.
+			if calls, _ := fixture.port.snapshot(); calls != 0 {
+				t.Fatalf("Hint calls = %d, want 0 without a frozen identity", calls)
+			}
+			manifest, _, plans := fixture.store.snapshots()
+
+			if plans != 0 {
+				t.Fatalf("store commits = %d, want 0", plans)
+			}
+			if manifest.State != acquisition.StateAwaitingVisibility {
+				t.Fatalf("Manifest state = %q, want AWAITING_VISIBILITY to remain", manifest.State)
+			}
+			if manifest.State == acquisition.StateAwaitingCanonical {
+				t.Fatal("an unidentifiable Manifest advanced to AWAITING_CANONICAL")
+			}
+		})
+	}
+}
+
+// TestRefreshHintMappingUnaffectedByExpectedName proves the frozen D-029 Hint
+// mapping is unchanged: the identity is never sent, and the root/scope/reason stay
+// exactly as before.
+func TestRefreshHintMappingUnaffectedByExpectedName(t *testing.T) {
+	fixture := newRefreshFixture(t, func(_ *storage.Binding, manifest *acquisition.Manifest, _ *jobs.Job) {
+		manifest.ExpectedName = stringPointer("MiXeD Case & Unicode 影片.mkv")
+	})
+	result, err := fixture.step.Submit(context.Background(), fixture.request())
+	if err != nil {
+		t.Fatalf("Submit() error = %v", err)
+	}
+	if !result.Changed || result.Manifest.State != acquisition.StateAwaitingCanonical {
+		t.Fatalf("result = %+v", result)
+	}
+	calls, requests := fixture.port.snapshot()
+	if calls != 1 {
+		t.Fatalf("Hint calls = %d, want exactly 1", calls)
+	}
+	hint := requests[0]
+	if hint.RootID != "root-115-a" {
+		t.Fatalf("root_id = %q, want the binding indexcore_root_id", hint.RootID)
+	}
+	if hint.ScopeKey != "/downloads/movies" {
+		t.Fatalf("scope_key = %q, want Manifest.target_path", hint.ScopeKey)
+	}
+	if hint.Reason != acquisition.MutationHintPossibleChange {
+		t.Fatalf("reason = %q, want POSSIBLE_CHANGE", hint.Reason)
+	}
+	// The identity must never travel in the Hint: IndexCore refreshes the directory.
+	if strings.Contains(hint.ScopeKey, "MiXeD") || strings.Contains(hint.RootID, "MiXeD") {
+		t.Fatal("expected_name leaked into the Hint")
+	}
+	if strings.Contains(hint.ScopeKey, "影片") {
+		t.Fatal("expected_name leaked into the Hint scope_key")
+	}
+	// The durable identity is still frozen on the Manifest after the handoff.
+	manifest, _, _ := fixture.store.snapshots()
+	if manifest.ExpectedName == nil || *manifest.ExpectedName != "MiXeD Case & Unicode 影片.mkv" {
+		t.Fatalf("frozen identity = %v, want it preserved verbatim", manifest.ExpectedName)
+	}
+}

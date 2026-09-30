@@ -54,8 +54,8 @@ func ValidateExpectedNamePointer(name *string) error {
 	return ValidateExpectedName(*name)
 }
 
-// resolveProviderResultName applies the frozen D-031 provider-success identity rules
-// to the durable expected name and the provider-reported result name.
+// ResolveProviderResultName applies the frozen D-031 provider-success identity
+// rules to the durable expected name and the provider-reported result name.
 //
 // It returns the name that must be committed and whether the durable value changes.
 //
