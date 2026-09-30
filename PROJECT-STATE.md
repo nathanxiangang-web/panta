@@ -13,7 +13,8 @@ Gate 0, Gate 1, and Gate 2 are formally accepted and closed. Gate 3.1 through Ga
 - Project name: Panta
 - MVP-first: functionality before UI polish
 - Team model: 1 Architect + 1 Developer
-- OpenList is part of the primary observation path
+- OpenList remains inside the primary observation path as an IndexCore-owned collector dependency
+- Panta acquisition does not directly query OpenList for visibility/canonical truth
 - IndexCore remains an independent canonical physical-resource kernel
 - Panta introduces a separate logical Catalog
 - Resource identity model: Asset → Release → Variant → Copy
@@ -21,7 +22,7 @@ Gate 0, Gate 1, and Gate 2 are formally accepted and closed. Gate 3.1 through Ga
 - 115 is the first provider, not the product architecture
 - 115 cloud download is an MVP core capability
 - Cloud download/share require product login
-- Cloud-download result must reach Panta through OpenList visibility + IndexCore scoped refresh, not a full scan
+- Cloud-download result must be handed to the IndexCore-owned OpenList observation pipeline through a trusted scoped Mutation Hint, then canonically confirmed by IndexCore Query/Journal; no Panta direct OpenList verification and no full scan
 - CodeArts CLI is the initial replaceable Agent Runtime
 - Initial backend implementation baseline: Go 1.27.1
 - MVP deployment shape: single-process modular monolith
@@ -30,6 +31,7 @@ Gate 0, Gate 1, and Gate 2 are formally accepted and closed. Gate 3.1 through Ga
 - Applied migration history must be an ordered prefix; history gaps/out-of-order states fail closed
 - Provider-changing side effects must be represented by a durable Job before execution
 - Expired RUNNING job leases become RECOVERY_REQUIRED, never blind automatic retry
+- `docs/AI-ARCHITECTURE-MEMORY.md` is the mandatory compact preflight for AI/Architect sessions; newer accepted Git decisions override old Issue/PR/chat context
 
 ## Active gate
 
@@ -700,9 +702,10 @@ Status: **AUTHORIZED / IN PROGRESS**
 Tracking: GitHub Issue #39
 
 Correction:
-- Issue #37 (direct Panta -> OpenList visibility verifier) was closed NOT PLANNED.
+- Issue #37 was closed NOT PLANNED because direct Panta -> OpenList acquisition verification violates D-018/D-015.
 - D-029 supersedes D-028 for acquisition verification.
 - Panta does not directly inspect OpenList in the acquisition path.
+- This correction is also frozen in `docs/AI-ARCHITECTURE-MEMORY.md`, `PROJECT-CONTEXT.md`, and `docs/MVP-BLUEPRINT.md`.
 
 Scope:
 - implement the Panta-owned typed client for IndexCore's accepted trusted Mutation Hint transport;
