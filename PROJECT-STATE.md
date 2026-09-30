@@ -6,7 +6,7 @@
 
 **MVP implementation — Gate 3**
 
-Gate 0, Gate 1, and Gate 2 are formally accepted and closed. Gate 3.1 through Gate 3.10 are accepted and merged. Gate 3.11 is authorized and in progress.
+Gate 0, Gate 1, and Gate 2 are formally accepted and closed. Gate 3.1 through Gate 3.11 are accepted and merged. Gate 3.12 is authorized and in progress.
 
 ## Accepted baseline
 
@@ -822,9 +822,9 @@ Until the relevant gate is accepted, do not implement:
 
 ## Next architect action
 
-Review the Gate 3.11 PR against **Issue #46 / D-034**: exactly one durable Manifest-selected stage per previously claimed ACQUISITION Job; closed ExecutionStep→ProviderOutcome mapping; explicit uncertain-side-effect recovery; trusted IndexCore Hint boundary; canonical READY only through the accepted Q5/Projector/Copy path; fail-closed terminal/inconsistent states; real PostgreSQL multi-claim restart evidence; and Gate 0–3.10 regressions.
+Review Gate 3.12 PR against **Issue #48 / D-035**: type-scoped ACQUISITION claiming, atomic expired-lease recovery of Manifest + Job using DB time and Manifest-before-Job locks, preservation of provider START_RESERVED fences, generic recovery non-interference, and real PostgreSQL concurrency/rollback/regression evidence.
 
-Do not authorize Gate 3.12 until Gate 3.11 is accepted and merged.
+Do not authorize an autonomous worker loop or Gate 3.13 before Gate 3.12 is accepted.
 
 
 ## Current bounded task
@@ -874,9 +874,24 @@ Explicitly deferred:
 
 ### Gate 3.11 — One-claim acquisition stage dispatcher and controlled end-to-end orchestration
 
-Status: **AUTHORIZED / IN PROGRESS**
+Status: **ACCEPTED**
 
-Tracking: GitHub Issue #46
+Tracking: GitHub Issue #46 / PR #47
+
+Merged:
+- reviewed exact head `dab48f476afe2e382bad7dddbb4c0f113b7789a9`;
+- squash commit `e20d6813970c61951b10dc841fd1b020880e93f5`.
+
+Acceptance evidence:
+- one persisted Manifest-selected stage per claimed ACQUISITION Job;
+- closed provider outcome translation, exact result_name propagation and D-026 durable handoff;
+- trusted IndexCore Hint and canonical Q5/Projector/Copy/READY boundaries preserved;
+- same Job across independently claimed provider, visibility, canonical pending and READY stages, generation increases while FailureCount remains stable;
+- provider START_RESERVED→StartDownload error/invalid reference is marked uncertain on the first real execution and atomically enters RECOVERY_REQUIRED;
+- PostgreSQL multi-claim and real ExecutionStep side-effect uncertainty tests confirm terminal replay and no duplicate StartDownload;
+- Architect Round 2 ACCEPTED (review `5365521883`);
+- exact-head CI run `36708061685` all three jobs SUCCESS;
+- schema unchanged at version 12.
 
 Governing decision: D-034.
 
@@ -893,3 +908,27 @@ Explicitly deferred:
 - automatic ClaimNext loop / worker daemon / process deployment;
 - Source Resolver normalization, auth/quota/share/access;
 - public API/UI, Agent and Search-dependent behavior.
+
+
+## Current bounded task
+
+### Gate 3.12 — Acquisition-only Job claim and atomic expired-lease recovery
+
+Status: **AUTHORIZED / IN PROGRESS**
+
+Tracking: GitHub Issue #48
+
+Governing decision: D-035.
+
+Scope:
+- acquire only ACQUISITION jobs through an atomic type-filtered ClaimNext capability;
+- atomically recover an expired RUNNING linked Acquisition Manifest + Job, using database time and accepted Manifest→Job lock order;
+- prevent the generic Job recovery sweep from creating an inconsistent acquisition pair;
+- preserve side-effect reservation, result identity, ClaimAttempts and FailureCount;
+- use PostgreSQL concurrency/rollback/restart evidence and full existing regression;
+- no new schema version expected.
+
+Explicitly deferred:
+- continuous worker / ClaimNext scheduler / process wiring;
+- real provider credentials/deployment/periodic cadence;
+- Source Resolver, auth/quota/share/access, Agent, public API/UI.
