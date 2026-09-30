@@ -6,7 +6,7 @@
 
 **MVP implementation — Gate 3**
 
-Gate 0, Gate 1, and Gate 2 are formally accepted and closed. Gate 3.1 through Gate 3.14 are accepted and merged. Gate 3.15 is authorized and in progress.
+Gate 0, Gate 1, and Gate 2 are formally accepted and closed. Gate 3.1 through Gate 3.15 are accepted and merged. Gate 3.16 is authorized and in progress.
 
 ## Accepted baseline
 
@@ -1021,9 +1021,17 @@ Explicitly deferred:
 
 ### Gate 3.15 — Fail-closed runtime composition and controlled real-protocol acquisition E2E
 
-Status: **AUTHORIZED / IN PROGRESS**
+Status: **ACCEPTED**
 
-Tracking: GitHub Issue #54
+Tracking: GitHub Issue #54 / PR #55
+
+Merge evidence:
+- reviewed HEAD `55442628d3b95f19cbaa48125f9ec37ea76ecde4`;
+- squash commit `d1351ccba8cfd03a33e3175ad38462f2f12cb4b6`;
+- Architect Review `5368761583` ACCEPTED;
+- exact-head CI `36739873694` all three jobs SUCCESS, including explicit PostgreSQL 16 controlled runtime E2E.
+
+Acceptance: one fail-closed Panta PostgreSQL v12/IndexCore read+trusted Hint/115 session registry/Journal Projector/RunOnce/Worker graph; external injected CredentialRef-bound credentials, redacted startup failures; ACTIVE session inventory before any claim; controlled HTTP protocol E2E provider→Hint→Q5/Q8→exact Copy→READY and failure/cancellation tests. No real 115 account contact and no deployment.
 
 Governing decision: D-038.
 
@@ -1035,3 +1043,22 @@ Scope:
 - no new schema migration planned.
 
 Deferred: real 115 account login, production deployment, Source Resolver, public API/UI and distributed scheduling.
+
+## Current bounded task
+
+### Gate 3.16 — Protected operator bootstrap, read-only preflight and explicit acquisition worker startup
+
+Status: **AUTHORIZED / IN PROGRESS**
+
+Tracking: GitHub Issue #56
+
+Governing decision: D-039.
+
+Scope:
+- disabled-default CLI remains side-effect-free; explicit read-only preflight and distinct explicit worker start;
+- externally protected secrets with a documented permission model, no CLI plaintext cookie/token and no secret-bearing logs;
+- reject incomplete schema v12/active connection/Hint trust before claiming any work;
+- reuse D-038 Runtime exactly once, graceful signal/cancellation and safe pool Close;
+- controlled PostgreSQL + local HTTP startup/stop evidence; no real 115 account or new migration.
+
+Deferred: real 115 account download, deployment/image/HA, Source Resolver, API/UI, and Agent.
