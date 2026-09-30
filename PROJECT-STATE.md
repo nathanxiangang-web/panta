@@ -822,10 +822,9 @@ Until the relevant gate is accepted, do not implement:
 
 ## Next architect action
 
-Review Gate 3.15 PR against **Issue #54 / D-038**: one fail-closed enabled runtime graph combining accepted PostgreSQL stores, IndexCore Q5/Q8 + trusted Hint clients, the Journal Projector, exact provider-session registry, D-036 RunOnce and D-037 Worker. Check injected credential safety, schema v12 guard, owned-resource shutdown, controlled real-protocol PostgreSQL/HTTP E2E and exact-head CI.
+Review Gate 3.16 PR against **Issue #56 / D-039**: protected externally injected credentials, read-only preflight distinct from explicit worker start, disabled-default/no-credential CLI safety, exact ProviderID/ConnectionID/CredentialRef and trusted Hint checks, complete schema v12, controlled PostgreSQL+local HTTP startup E2E, signal/cancellation/Close ordering, and exact-head CI.
 
-Do not authorize real-account 115 acceptance, public API/UI, deployment or Gate 3.16 until Gate 3.15 is accepted.
-
+Do not authorize real 115 account downloads, production deployment or Gate 3.17 until Gate 3.16 is accepted.
 
 ## Current bounded task
 
