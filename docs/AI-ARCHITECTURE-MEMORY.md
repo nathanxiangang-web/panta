@@ -326,6 +326,8 @@ Phase A staging harness is accepted and merged:
 - exact-head CI `37874559508` all green.
 The merged harness is read-only evidence collection only. **Gate 3.18 remains open until the human operator executes Phase B with the real staging 115/OpenList/IndexCore environment and returns redacted evidence.**
 
+Live Phase B first attempt (operator report, 2026-10-09) passed Panta preflight and Job claim, but the first real 115 StartDownload did not leave a durable task reference: linked Manifest/Job RECOVERY_REQUIRED and provider task START_RESERVED. The upstream failure cause and whether 115 actually created a remote task **remain unknown**. Issue #62 is the bounded diagnostic under Issue #60: read-only remote task inquiry, first error categorization, minimal fix and exact-head CI only if warranted, then a separate human-initiated fresh test with distinct IDs. Never clear the original fence or blindly replay; do not mark Gate 3.18 ACCEPTED or authorize Gate 3.19 on partial evidence.
+
 Pinned external IndexCore baseline:
 
 ```text
