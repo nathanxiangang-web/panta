@@ -822,9 +822,8 @@ Until the relevant gate is accepted, do not implement:
 
 ## Next architect action
 
-Wait for the human operator to complete **Gate 3.18 Phase B** on the staging host using the merged `docs/GATE3.18-STAGING-RUNBOOK.md`. Review only redacted baseline/inspect/timeline evidence plus operator note. PASS requires one real provider task, exact Q5 PRESENT + new Q8 evidence + projected PRESENT Copy, Manifest READY/result_copy_id and same Job SUCCEEDED.
+Review bounded live 115 `StartDownload` failure diagnosis under Issue #62: first upstream error category, remote task existence checked read-only, no clearing old `START_RESERVED`, minimal regression/CI only if code changes. Then obtain human-run fresh independent Phase B evidence for Gate 3.18 Issue #60: provider → Hint → Q5/Q8 → projected PRESENT Copy → READY/SUCCEEDED. No new Gate, no unrelated Access/302 scope.
 
-Do not close Issue #60, authorize Gate 3.19, weaken Hint loopback trust, clear START_RESERVED, or rerun StartDownload to force success.
 
 ## Current bounded task
 
@@ -1101,9 +1100,9 @@ Governing decision: D-040.
 
 ### Gate 3.18 — Human-authorized real 115 + OpenList + IndexCore staging E2E
 
-Status: **PHASE A ACCEPTED / PHASE B HUMAN RUN PENDING**
+Status: **PHASE A ACCEPTED / PHASE B REAL-115 START BLOCKED**
 
-Tracking: GitHub Issue #60 / Phase A PR #61
+Tracking: GitHub Issue #60 / Phase A PR #61 / live-start diagnostic Issue #62
 
 Phase A evidence:
 - reviewed exact HEAD `7424e5322fbb061fd14472dc0becde03b9fa6272`;
@@ -1115,6 +1114,8 @@ Phase A evidence:
 - schema unchanged at v12.
 
 Gate 3.18 is NOT accepted until the operator completes Phase B on the staging host and returns redacted evidence.
+
+Live staging operator report (2026-10-09): preflight succeeded, worker claimed one Job, first 115 StartDownload ended without a durable task reference; Manifest+Job RECOVERY_REQUIRED with provider START_RESERVED. Original upstream cause and presence of a remote 115 task are not yet established. Architect opened Issue #62 for narrowly scoped read-only remote-task inspection, error classification, minimal patch if evidenced, and a separately human-started fresh test only after understanding the cause. The old reservation must not be cleared/retried. Do not start Gate 3.19 or close Issue #60 on partial progress.
 
 Tracking: GitHub Issue #60
 
