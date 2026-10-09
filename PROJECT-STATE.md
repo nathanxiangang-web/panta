@@ -822,9 +822,9 @@ Until the relevant gate is accepted, do not implement:
 
 ## Next architect action
 
-Review Gate 3.18 staging harness/runbook and the human-operated real-account evidence against **Issue #60 / D-041**. Preserve the accepted provider/observation split: Panta may mutate 115 through its provider adapter and send the trusted loopback Hint, but only IndexCore's OpenList collector + Canonical/Journal may establish physical truth. Require exact state-transition evidence through READY, clean shutdown, and redacted secrets/source.
+Wait for the human operator to complete **Gate 3.18 Phase B** on the staging host using the merged `docs/GATE3.18-STAGING-RUNBOOK.md`. Review only redacted baseline/inspect/timeline evidence plus operator note. PASS requires one real provider task, exact Q5 PRESENT + new Q8 evidence + projected PRESENT Copy, Manifest READY/result_copy_id and same Job SUCCEEDED.
 
-Do not authorize production deployment, Gate 4 implementation, public API/UI or any architectural workaround merely because a staging run fails.
+Do not close Issue #60, authorize Gate 3.19, weaken Hint loopback trust, clear START_RESERVED, or rerun StartDownload to force success.
 
 ## Current bounded task
 
@@ -1101,7 +1101,20 @@ Governing decision: D-040.
 
 ### Gate 3.18 — Human-authorized real 115 + OpenList + IndexCore staging E2E
 
-Status: **AUTHORIZED / IN PROGRESS**
+Status: **PHASE A ACCEPTED / PHASE B HUMAN RUN PENDING**
+
+Tracking: GitHub Issue #60 / Phase A PR #61
+
+Phase A evidence:
+- reviewed exact HEAD `7424e5322fbb061fd14472dc0becde03b9fa6272`;
+- Architect Review `5465144212` ACCEPTED Phase A only;
+- squash commit `7a507a2411a26f8e36b0abf70271b3a8417942d7`;
+- exact-head CI run `37874559508` all three jobs SUCCESS;
+- `cmd/panta-staging` provides read-only baseline/inspect/watch evidence only;
+- protected human runbook merged; no real 115/OpenList/Hint credentials or mutation were used by CI/AI;
+- schema unchanged at v12.
+
+Gate 3.18 is NOT accepted until the operator completes Phase B on the staging host and returns redacted evidence.
 
 Tracking: GitHub Issue #60
 
