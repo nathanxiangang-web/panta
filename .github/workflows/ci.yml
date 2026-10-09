@@ -30,7 +30,7 @@ jobs:
       - name: Vet
         run: go vet ./...
       - name: Build commands
-        run: go build ./cmd/panta ./cmd/panta-db
+        run: go build ./cmd/panta ./cmd/panta-db ./cmd/panta-staging
 
   postgres-integration:
     name: PostgreSQL 16 integration and migrations
@@ -62,7 +62,7 @@ jobs:
           cache-dependency-path: go.sum
       - name: PostgreSQL integration tests
         run: go test ./internal/store/postgres -run 'Test(Postgres|GateZero)' -count=1 -v
-      - name: Gate 3.15-3.16 controlled acquisition integration
+      - name: Gate 3.15-3.18 controlled acquisition integration
         run: go test ./test/e2e/acquisitionruntime -run 'TestPostgres(AcquisitionRuntime|Operator)' -count=1 -v
       - name: Apply migrations
         run: go run ./cmd/panta-db migrate

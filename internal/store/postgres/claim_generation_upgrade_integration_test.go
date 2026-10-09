@@ -197,7 +197,9 @@ func TestPostgresJobClaimGenerationUpgradeKeepsLiveLeaseFence(t *testing.T) {
 	now := time.Date(2026, 9, 30, 9, 0, 0, 0, time.UTC)
 	const legacyGeneration = 3
 	const maxAttempts = 4
-	leaseEnd := now.Add(24 * time.Hour)
+	// The lease must be live according to PostgreSQL time on the runner; the
+	// fixed historical migration timestamp is not a durable future deadline.
+	leaseEnd := time.Now().UTC().Add(24 * time.Hour)
 	jobID := jobs.JobID("37000000-0000-4000-8000-000000000194")
 	seedLegacyV9Job(t, ctx, pool, jobID, legacyGeneration, maxAttempts,
 		"RUNNING", "worker-a", &leaseEnd, nil, now)
