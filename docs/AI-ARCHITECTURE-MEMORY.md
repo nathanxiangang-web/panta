@@ -2,7 +2,7 @@
 
 > Canonical short-form project memory for Architect/AI sessions.
 >
-> Last architecture-memory synchronization: **2026-10-01**
+> Last architecture-memory synchronization: **2026-10-09**
 > Active Gate: **3.18 / Issue #60 — Human-authorized real 115 + OpenList + IndexCore staging E2E**
 > Governing corrections: **D-029** (IndexCore-owned observation), **D-030** (Git-first AI reconstruction), **D-032** (durable result_name locator), **D-033** (READY anchored to one canonical projected Copy), **D-034** (one-claim stage routing), **D-035** (type-scoped claiming and atomic recovery), **D-036** (one explicit runner tick), **D-037** (opt-in worker lifecycle), **D-038** (fail-closed runtime graph and secret/trust boundaries), **D-039** (protected operator bootstrap/preflight), **D-040** (deterministic source intake with exact value preservation), and **D-041** (human-authorized live staging acceptance without architectural bypass).
 >
@@ -318,6 +318,13 @@ Gate 3.17 is accepted.
 ## 5.10 Human-authorized real staging acceptance
 
 D-041 / Gate 3.18 authorizes one bounded **operator-run staging validation**, not a new product architecture.
+
+Phase A staging harness is accepted and merged:
+- PR #61 reviewed exact HEAD `7424e5322fbb061fd14472dc0becde03b9fa6272`;
+- Architect Review `5465144212`;
+- squash `7a507a2411a26f8e36b0abf70271b3a8417942d7`;
+- exact-head CI `37874559508` all green.
+The merged harness is read-only evidence collection only. **Gate 3.18 remains open until the human operator executes Phase B with the real staging 115/OpenList/IndexCore environment and returns redacted evidence.**
 
 Pinned external IndexCore baseline:
 
