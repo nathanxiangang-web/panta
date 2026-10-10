@@ -56,12 +56,12 @@ func (backend *CookiedBackend) AddOfflineTaskURI(ctx context.Context, uri string
 	backend.mu.Lock()
 	defer backend.mu.Unlock()
 	if backend.trace != nil {
-		backend.trace.status.Store(0)
+		backend.trace.reset()
 	}
 	hashes, err := backend.client.AddOfflineTaskURIs([]string{uri}, saveDirID)
 	if err != nil && backend.trace != nil {
 		diagnostic := newStartDiagnostic(err, 0)
-		diagnostic.httpStatus = int(backend.trace.status.Load())
+		diagnostic.locate(err, backend.trace)
 		return nil, diagnostic
 	}
 	return hashes, err

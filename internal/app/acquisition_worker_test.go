@@ -152,7 +152,8 @@ func TestAcquisitionWorkerNormalEventsAndCadence(t *testing.T) {
 		default:
 			return RunOnceResult{State: RunOnceStageCompleted,
 				Stage: &acquisition.StageDispatchResult{Stage: acquisition.StageProvider,
-					DiagnosticCategory: "SOURCE_REJECTED", DiagnosticElapsedMS: 321}}, nil
+					DiagnosticCategory: "SOURCE_REJECTED", DiagnosticElapsedMS: 321,
+					DiagnosticStage: "OFFLINE_POST_OUTER_JSON", DiagnosticResponseShape: "HTML"}}, nil
 		}
 	}}
 	worker := newTestWorker(t, runner, WithWorkerWaiter(waiter), WithWorkerEventSink(func(event WorkerEvent) {
@@ -168,7 +169,7 @@ func TestAcquisitionWorkerNormalEventsAndCadence(t *testing.T) {
 		if event.Kind != want || event.Owner != worker.Owner() {
 			t.Fatalf("event = %#v, want %s", event, want)
 		}
-		if want == WorkerStage && (event.DiagnosticCategory != "SOURCE_REJECTED" || event.DiagnosticElapsedMS != 321) {
+		if want == WorkerStage && (event.DiagnosticCategory != "SOURCE_REJECTED" || event.DiagnosticElapsedMS != 321 || event.DiagnosticStage != "OFFLINE_POST_OUTER_JSON" || event.DiagnosticResponseShape != "HTML") {
 			t.Fatalf("stage diagnostic = %#v", event)
 		}
 		if want == WorkerIdle || want == WorkerRecoveryOnly {
@@ -186,6 +187,12 @@ func TestAcquisitionWorkerNormalEventsAndCadence(t *testing.T) {
 	}
 	if calls, _ := runner.snapshot(); calls != 3 {
 		t.Fatalf("tick count = %d", calls)
+	}
+}
+
+func TestParserMetadataIsClosed(t *testing.T) {
+	if closedParserStage("PRIVATE-RESPONSE") != "UNKNOWN" || closedResponseShape("PRIVATE-RESPONSE") != "UNKNOWN" {
+		t.Fatal("untrusted response metadata escaped")
 	}
 }
 

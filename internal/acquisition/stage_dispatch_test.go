@@ -17,6 +17,8 @@ type dispatchStartDiagnostic struct{}
 func (dispatchStartDiagnostic) Error() string                    { return "private upstream response" }
 func (dispatchStartDiagnostic) DiagnosticCategory() string       { return "SOURCE_REJECTED" }
 func (dispatchStartDiagnostic) DiagnosticElapsed() time.Duration { return 321 * time.Millisecond }
+func (dispatchStartDiagnostic) DiagnosticStage() string          { return "OFFLINE_POST_OUTER_JSON" }
+func (dispatchStartDiagnostic) DiagnosticResponseShape() string  { return "HTML" }
 
 type dispatchJobReader struct{ job jobs.Job }
 
@@ -196,7 +198,7 @@ func TestStageDispatcherRetainsRedactedDiagnosticAfterRecoveryCommit(t *testing.
 		t.Fatal(err)
 	}
 	if result.Manifest.State != StateRecoveryRequired || result.Job.State != jobs.StateRecoveryRequired ||
-		result.DiagnosticCategory != "SOURCE_REJECTED" || result.DiagnosticElapsedMS != 321 {
+		result.DiagnosticCategory != "SOURCE_REJECTED" || result.DiagnosticElapsedMS != 321 || result.DiagnosticStage != "OFFLINE_POST_OUTER_JSON" || result.DiagnosticResponseShape != "HTML" {
 		t.Fatalf("recovery diagnostic = %#v", result)
 	}
 	fixture.assertCalls(t, 1, 1, 0, 0)

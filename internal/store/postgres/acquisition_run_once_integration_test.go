@@ -111,6 +111,8 @@ func (gate318StartDiagnostic) DiagnosticCategory() string       { return "RESPON
 func (gate318StartDiagnostic) DiagnosticElapsed() time.Duration { return 484 * time.Millisecond }
 func (gate318StartDiagnostic) DiagnosticCauseType() string      { return "*json.SyntaxError" }
 func (gate318StartDiagnostic) DiagnosticHTTPStatus() int        { return 200 }
+func (gate318StartDiagnostic) DiagnosticStage() string          { return "OFFLINE_POST_OUTER_JSON" }
+func (gate318StartDiagnostic) DiagnosticResponseShape() string  { return "TEXT" }
 
 func TestPostgresAcquisitionRunOnceRealStartUncertainty(t *testing.T) {
 	fixture := newCanonicalPgFixture(t)
@@ -161,7 +163,7 @@ func TestPostgresAcquisitionRunOnceRealStartUncertainty(t *testing.T) {
 		t.Fatalf("uncertain tick = %#v, %v; starts %d", first, err, downloader.startCalls)
 	}
 	if first.Stage.DiagnosticCategory != "RESPONSE_DECODE_FAILURE" || first.Stage.DiagnosticElapsedMS != 484 ||
-		first.Stage.DiagnosticCauseType != "*json.SyntaxError" || first.Stage.DiagnosticHTTPStatus != 200 {
+		first.Stage.DiagnosticCauseType != "*json.SyntaxError" || first.Stage.DiagnosticHTTPStatus != 200 || first.Stage.DiagnosticStage != "OFFLINE_POST_OUTER_JSON" || first.Stage.DiagnosticResponseShape != "TEXT" {
 		t.Fatalf("committed recovery lost safe start diagnostic: %#v", first.Stage)
 	}
 	stored, err := tasks.GetProviderTask(ctx, manifestID)

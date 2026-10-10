@@ -26,6 +26,8 @@ type StartDiagnostic struct {
 	matches    []error
 	causeType  string
 	httpStatus int
+	stage      string
+	shape      string
 }
 
 func (diagnostic *StartDiagnostic) Error() string {
@@ -36,6 +38,39 @@ func (diagnostic *StartDiagnostic) DiagnosticCategory() string       { return di
 func (diagnostic *StartDiagnostic) DiagnosticElapsed() time.Duration { return diagnostic.elapsed }
 func (diagnostic *StartDiagnostic) DiagnosticCauseType() string      { return diagnostic.causeType }
 func (diagnostic *StartDiagnostic) DiagnosticHTTPStatus() int        { return diagnostic.httpStatus }
+func (diagnostic *StartDiagnostic) DiagnosticStage() string          { return diagnostic.stage }
+func (diagnostic *StartDiagnostic) DiagnosticResponseShape() string  { return diagnostic.shape }
+
+func (diagnostic *StartDiagnostic) locate(cause error, trace *startHTTPTrace) {
+	diagnostic.httpStatus = int(trace.status.Load())
+	trace.mu.Lock()
+	defer trace.mu.Unlock()
+	diagnostic.shape = trace.shape
+	diagnostic.stage = "UNKNOWN"
+	if trace.operation == "USER_INFO_GET" {
+		diagnostic.stage = "USER_INFO_GET"
+		return
+	}
+	if trace.operation != "OFFLINE_POST" {
+		return
+	}
+	if diagnostic.httpStatus == 0 || diagnostic.category == "NETWORK_FAILURE" || diagnostic.category == "TIMEOUT" || diagnostic.category == "CONTEXT_CANCELED" {
+		diagnostic.stage = "OFFLINE_POST_TRANSPORT"
+		return
+	}
+	var syntax *json.SyntaxError
+	var typed *json.UnmarshalTypeError
+	var encoded base64.CorruptInputError
+	jsonFailure := errors.As(cause, &syntax) || errors.As(cause, &typed)
+	switch {
+	case trace.observed && !trace.outerParsed && jsonFailure:
+		diagnostic.stage = "OFFLINE_POST_OUTER_JSON"
+	case errors.As(cause, &encoded):
+		diagnostic.stage = "OFFLINE_POST_BASE64_CRYPTO"
+	case trace.observed && trace.outerParsed && jsonFailure:
+		diagnostic.stage = "OFFLINE_POST_DECRYPTED_JSON"
+	}
+}
 
 func (diagnostic *StartDiagnostic) Is(target error) bool {
 	if errors.Is(diagnostic.base, target) {
@@ -87,7 +122,7 @@ func newReferenceDiagnostic(cause error, elapsed time.Duration) *StartDiagnostic
 		category = "REFERENCE_AMBIGUOUS"
 		base = ErrTaskReferenceAmbiguous
 	}
-	return &StartDiagnostic{category: category, elapsed: elapsed, base: base}
+	return &StartDiagnostic{category: category, elapsed: elapsed, base: base, stage: "OFFLINE_POST_REFERENCE"}
 }
 
 func startFailureCategory(err error) string {
