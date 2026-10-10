@@ -822,8 +822,7 @@ Until the relevant gate is accepted, do not implement:
 
 ## Next architect action
 
-Review bounded live 115 `StartDownload` failure diagnosis under Issue #62: first upstream error category, remote task existence checked read-only, no clearing old `START_RESERVED`, minimal regression/CI only if code changes. Then obtain human-run fresh independent Phase B evidence for Gate 3.18 Issue #60: provider → Hint → Q5/Q8 → projected PRESENT Copy → READY/SUCCEEDED. No new Gate, no unrelated Access/302 scope.
-
+Review Issue #62 Phase C diagnosis on pinned 115driver v1.3.5 `AddOfflineTaskURIs` response parsing / encrypted payload contract. The new diagnostic proves HTTP 200 + `json.SyntaxError` even after the SDK UA fix, but cannot yet localize the parser failure. Require redacted structural evidence and a synthetic reproducer, then a minimal evidence-based fix and exact-head CI before a new operator-run test using fresh Manifest/Job IDs. Preserve historical START_RESERVED rows. Gate 3.18 / Issue #60 remains OPEN; Gate 3.19 unauthorized.
 
 ## Current bounded task
 
@@ -1100,9 +1099,9 @@ Governing decision: D-040.
 
 ### Gate 3.18 — Human-authorized real 115 + OpenList + IndexCore staging E2E
 
-Status: **PHASE A ACCEPTED / PHASE B REAL-115 START BLOCKED**
+Status: **PHASE A ACCEPTED / PR #63 DIAGNOSTICS ACCEPTED / PHASE B LIVE 115 START BLOCKED**
 
-Tracking: GitHub Issue #60 / Phase A PR #61 / live-start diagnostic Issue #62
+Tracking: GitHub Issue #60 / Phase A PR #61 / live-start diagnostic Issue #62 / merged diagnostics PR #63
 
 Phase A evidence:
 - reviewed exact HEAD `7424e5322fbb061fd14472dc0becde03b9fa6272`;
@@ -1120,6 +1119,16 @@ Live staging operator report (2026-10-09): preflight succeeded, worker claimed o
 Tracking: GitHub Issue #60
 
 Governing decision: D-041.
+Diagnostic PR #63 (accepted/merged, not acquisition acceptance):
+- reviewed exact HEAD `39a3e02751f1fdcb9384c8fef04fc00085f22f1a`;
+- Architect Review `5477994000` ACCEPTED for diagnostics only;
+- squash commit `b0b91701e15409e7ff5cd573def5883e14b29052`;
+- exact-head CI `38031086983` all three jobs SUCCESS;
+- 115 StartDownload now reports allowlisted category, elapsed milliseconds, HTTP status and Go cause type after durable RECOVERY_REQUIRED commit; SDK User-Agent initialization order fixed;
+- actual live result still FAIL: separate new-ID attempts HTTP 200 + `json.SyntaxError` at ~484 ms and ~397 ms (the latter after User-Agent fix); original first error unknown;
+- 115 read-only task search NOT_FOUND_WITH_LIMITATIONS; original and diagnostic START_RESERVED rows remain unchanged;
+- next: inspect pinned 115driver response/decryption contract and identify parser failure location with synthetic tests before any new real source submission. No Gate 3.19.
+
 
 External baseline:
 - IndexCore `v0.4.0-alpha.1`;
