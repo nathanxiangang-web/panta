@@ -102,6 +102,16 @@ func TestPostgresAcquisitionRunOnceRecoveryThenTwoSeparateStages(t *testing.T) {
 	}
 }
 
+type gate318StartDiagnostic struct{}
+
+func (gate318StartDiagnostic) Error() string {
+	return "115 StartDownload failed: RESPONSE_DECODE_FAILURE"
+}
+func (gate318StartDiagnostic) DiagnosticCategory() string       { return "RESPONSE_DECODE_FAILURE" }
+func (gate318StartDiagnostic) DiagnosticElapsed() time.Duration { return 484 * time.Millisecond }
+func (gate318StartDiagnostic) DiagnosticCauseType() string      { return "*json.SyntaxError" }
+func (gate318StartDiagnostic) DiagnosticHTTPStatus() int        { return 200 }
+
 func TestPostgresAcquisitionRunOnceRealStartUncertainty(t *testing.T) {
 	fixture := newCanonicalPgFixture(t)
 	ctx := fixture.ctx
@@ -122,7 +132,7 @@ func TestPostgresAcquisitionRunOnceRealStartUncertainty(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	downloader := &gate311StartFailureDownloader{err: errors.New("lost provider response")}
+	downloader := &gate311StartFailureDownloader{err: gate318StartDiagnostic{}}
 	execution, err := acquisition.NewExecutionStepService(inputs, fixture.manifests, jobStore,
 		gate311ExecutionSession{downloader: downloader}, tasks)
 	if err != nil {
@@ -149,6 +159,10 @@ func TestPostgresAcquisitionRunOnceRealStartUncertainty(t *testing.T) {
 		first.Stage.Manifest.State != acquisition.StateRecoveryRequired || first.Stage.Job.State != jobs.StateRecoveryRequired ||
 		first.ClaimedJobID != jobID || downloader.startCalls != 1 {
 		t.Fatalf("uncertain tick = %#v, %v; starts %d", first, err, downloader.startCalls)
+	}
+	if first.Stage.DiagnosticCategory != "RESPONSE_DECODE_FAILURE" || first.Stage.DiagnosticElapsedMS != 484 ||
+		first.Stage.DiagnosticCauseType != "*json.SyntaxError" || first.Stage.DiagnosticHTTPStatus != 200 {
+		t.Fatalf("committed recovery lost safe start diagnostic: %#v", first.Stage)
 	}
 	stored, err := tasks.GetProviderTask(ctx, manifestID)
 	if err != nil || stored.State != acquisition.ProviderTaskStartReserved || stored.ProviderTaskRef != "" {

@@ -3,10 +3,12 @@ package p115
 import (
 	"context"
 	"errors"
+	"fmt"
 	"strings"
 	"sync"
 	"testing"
 
+	"github.com/SheltonZhu/115driver/pkg/driver"
 	"github.com/nathanxiangang-web/panta/internal/providers/contracts"
 )
 
@@ -296,19 +298,53 @@ func TestStartDownloadRequiresExactlyOneNonBlankHash(t *testing.T) {
 
 func TestStartDownloadAttributesBackendErrorWithoutRetry(t *testing.T) {
 	backend := newFakeBackend()
-	backend.addErr = errors.New("upstream 115 request failed")
+	backend.addErr = fmt.Errorf("%w: source=private-url cookie=private-cookie", driver.ErrOfflineInvalidLink)
 	adapter := newAdapter(t, backend)
 
 	_, err := adapter.StartDownload(context.Background(), validRequest())
 	if !errors.Is(err, ErrBackendStart) {
 		t.Fatalf("StartDownload() error = %v, want ErrBackendStart", err)
 	}
-	if !strings.Contains(err.Error(), "upstream 115 request failed") {
-		t.Fatalf("error %v does not attribute the backend failure", err)
+	if !errors.Is(err, driver.ErrOfflineInvalidLink) {
+		t.Fatalf("error %v lost the typed upstream cause", err)
+	}
+	if strings.Contains(err.Error(), "private-url") || strings.Contains(err.Error(), "private-cookie") ||
+		strings.Contains(fmt.Sprintf("%#v", err), "private-url") || strings.Contains(fmt.Sprintf("%#v", err), "private-cookie") {
+		t.Fatalf("error rendered an upstream response body: %v", err)
+	}
+	var diagnostic *StartDiagnostic
+	if !errors.As(err, &diagnostic) || diagnostic.DiagnosticCategory() != "SOURCE_REJECTED" {
+		t.Fatalf("diagnostic = %v, want SOURCE_REJECTED", err)
 	}
 	// Exactly one attempt: the adapter never retries.
 	if calls, _, _ := backend.addSnapshot(); calls != 1 {
 		t.Fatalf("backend add calls = %d, want exactly 1", calls)
+	}
+}
+
+func TestStartDownloadDiagnosticCategories(t *testing.T) {
+	for _, test := range []struct {
+		name  string
+		cause error
+		want  string
+	}{
+		{name: "timeout", cause: context.DeadlineExceeded, want: "TIMEOUT"},
+		{name: "auth", cause: driver.ErrNotLogin, want: "AUTH_REJECTED"},
+		{name: "already exists", cause: driver.ErrOfflineTaskExisted, want: "TASK_ALREADY_EXISTS"},
+		{name: "provider unknown", cause: driver.ErrUnexpected, want: "PROVIDER_API_UNKNOWN"},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			backend := newFakeBackend()
+			backend.addErr = test.cause
+			_, err := newAdapter(t, backend).StartDownload(context.Background(), validRequest())
+			var diagnostic *StartDiagnostic
+			if !errors.As(err, &diagnostic) || diagnostic.DiagnosticCategory() != test.want {
+				t.Fatalf("diagnostic = %v, want %s", err, test.want)
+			}
+			if !errors.Is(err, test.cause) {
+				t.Fatalf("diagnostic lost typed cause %v", test.cause)
+			}
+		})
 	}
 }
 

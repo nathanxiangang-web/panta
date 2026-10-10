@@ -47,6 +47,12 @@ type StageDispatchResult struct {
 	Changed  bool
 	Pending  bool
 	Terminal bool
+	// A closed, non-durable diagnostic from the one provider call. No raw
+	// upstream error, source, response body or credential crosses this result.
+	DiagnosticCategory   string
+	DiagnosticElapsedMS  int64
+	DiagnosticCauseType  string
+	DiagnosticHTTPStatus int
 }
 
 type ProviderStage interface {
@@ -181,9 +187,30 @@ func (dispatcher *StageDispatcher) Dispatch(ctx context.Context, request StageDi
 		if err := verifyStageResult(manifest.ID, job.ID, committed.Manifest, committed.Job, outcome); err != nil {
 			return StageDispatchResult{}, err
 		}
+		var category string
+		var elapsedMS int64
+		var causeType string
+		var httpStatus int
+		var diagnostic interface {
+			DiagnosticCategory() string
+			DiagnosticElapsed() time.Duration
+		}
+		if errors.As(stepErr, &diagnostic) {
+			category = diagnostic.DiagnosticCategory()
+			elapsedMS = diagnostic.DiagnosticElapsed().Milliseconds()
+		}
+		var metadata interface {
+			DiagnosticCauseType() string
+			DiagnosticHTTPStatus() int
+		}
+		if errors.As(stepErr, &metadata) {
+			causeType, httpStatus = metadata.DiagnosticCauseType(), metadata.DiagnosticHTTPStatus()
+		}
 		return StageDispatchResult{Stage: StageProvider, Manifest: committed.Manifest, Job: committed.Job,
 			Changed: committed.Changed, Pending: committed.Job.State == jobs.StateRetryWait,
-			Terminal: committed.Job.State != jobs.StateRetryWait}, nil
+			Terminal:           committed.Job.State != jobs.StateRetryWait,
+			DiagnosticCategory: category, DiagnosticElapsedMS: elapsedMS,
+			DiagnosticCauseType: causeType, DiagnosticHTTPStatus: httpStatus}, nil
 	case StateAwaitingVisibility:
 		result, err := dispatcher.visibility.Submit(ctx, RefreshRequest{
 			ManifestID: manifest.ID, JobID: job.ID, Owner: request.Owner,

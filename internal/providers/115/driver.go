@@ -30,6 +30,7 @@ var _ OfflineClient = (*driver.Pan115Client)(nil)
 // errors, or any diagnostic rendering of it.
 type CookiedBackend struct {
 	client OfflineClient
+	trace  *startHTTPTrace
 	// mu keeps this backend safe if it is ever driven concurrently; the adapter
 	// also serializes its own calls.
 	mu sync.Mutex
@@ -54,7 +55,16 @@ func (backend *CookiedBackend) AddOfflineTaskURI(ctx context.Context, uri string
 	}
 	backend.mu.Lock()
 	defer backend.mu.Unlock()
-	return backend.client.AddOfflineTaskURIs([]string{uri}, saveDirID)
+	if backend.trace != nil {
+		backend.trace.status.Store(0)
+	}
+	hashes, err := backend.client.AddOfflineTaskURIs([]string{uri}, saveDirID)
+	if err != nil && backend.trace != nil {
+		diagnostic := newStartDiagnostic(err, 0)
+		diagnostic.httpStatus = int(backend.trace.status.Load())
+		return nil, diagnostic
+	}
+	return hashes, err
 }
 
 // ListOfflineTasks reads one page and projects it into adapter-private terms so no
@@ -144,7 +154,9 @@ func NewAdapterFromCookie(cookie []byte, options Options) (*Adapter, error) {
 	if err != nil {
 		return nil, err
 	}
-	client := driver.Default().SetHttpClient(&http.Client{Timeout: timeout}).ImportCredential(credential)
+	trace := &startHTTPTrace{}
+	client := newDriverClient(&http.Client{Timeout: timeout,
+		Transport: statusTransport{next: http.DefaultTransport, trace: trace}}).ImportCredential(credential)
 	// Drop this package's only reference to the secret material. The imported
 	// client owns its own cookies from here on.
 	forgetCredential(credential)
@@ -153,8 +165,16 @@ func NewAdapterFromCookie(cookie []byte, options Options) (*Adapter, error) {
 	if err != nil {
 		return nil, err
 	}
+	backend.trace = trace
 	options.Backend = backend
 	return New(options)
+}
+
+// SetHttpClient replaces the pinned driver's resty client, including its
+// headers. Install the bounded HTTP client before applying the SDK's default
+// User-Agent, otherwise task submission sends resty's default identity.
+func newDriverClient(client *http.Client) *driver.Pan115Client {
+	return driver.New(driver.WithClient(client), driver.UA())
 }
 
 // forgetCredential clears the parsed credential fields so this package does not

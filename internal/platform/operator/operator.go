@@ -5,9 +5,11 @@ package operator
 import (
 	"context"
 	"errors"
+	"log"
 	"sync/atomic"
 	"time"
 
+	"github.com/nathanxiangang-web/panta/internal/app"
 	"github.com/nathanxiangang-web/panta/internal/platform/bootstrap"
 	"github.com/nathanxiangang-web/panta/internal/platform/config"
 	"github.com/nathanxiangang-web/panta/internal/runtime"
@@ -50,6 +52,16 @@ func Run(ctx context.Context, action Action, cfg config.Config, bootstrapPath st
 	deps, err := bootstrap.Load(startupCtx, bootstrapPath)
 	if err != nil {
 		return bootstrap.Category(err)
+	}
+	if action == Start {
+		deps.WorkerOptions = append(deps.WorkerOptions, app.WithWorkerEventSink(func(event app.WorkerEvent) {
+			if event.Kind == app.WorkerTransientError ||
+				(event.Kind == app.WorkerStage && event.DiagnosticCategory != "") {
+				log.Printf("acquisition worker event=%s job_id=%s claim=%d stage=%s error_kind=%s first_error_category=%s elapsed_ms=%d cause_type=%s http_status=%d",
+					event.Kind, event.JobID, event.ClaimAttempts, event.Stage, event.ErrorKind,
+					event.DiagnosticCategory, event.DiagnosticElapsedMS, event.DiagnosticCauseType, event.DiagnosticHTTPStatus)
+			}
+		}))
 	}
 	if builder == nil {
 		builder = runtime.NewRuntime
