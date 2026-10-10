@@ -60,17 +60,19 @@ const (
 // WorkerEvent is deliberately free of source links, provider references and
 // credentials. Only durable IDs and closed categories are emitted.
 type WorkerEvent struct {
-	Kind                 WorkerEventKind
-	Owner                string
-	Recovered            int64
-	JobID                jobs.JobID
-	ClaimAttempts        int
-	Stage                acquisition.Stage
-	ErrorKind            RunOnceErrorKind
-	DiagnosticCategory   string
-	DiagnosticElapsedMS  int64
-	DiagnosticCauseType  string
-	DiagnosticHTTPStatus int
+	Kind                    WorkerEventKind
+	Owner                   string
+	Recovered               int64
+	JobID                   jobs.JobID
+	ClaimAttempts           int
+	Stage                   acquisition.Stage
+	ErrorKind               RunOnceErrorKind
+	DiagnosticCategory      string
+	DiagnosticElapsedMS     int64
+	DiagnosticCauseType     string
+	DiagnosticHTTPStatus    int
+	DiagnosticStage         string
+	DiagnosticResponseShape string
 }
 
 type WorkerEventSink func(WorkerEvent)
@@ -226,6 +228,14 @@ func (worker *AcquisitionWorker) Run(ctx context.Context) error {
 				event.DiagnosticCauseType = closedCauseType(metadata.DiagnosticCauseType())
 				event.DiagnosticHTTPStatus = metadata.DiagnosticHTTPStatus()
 			}
+			var boundary interface {
+				DiagnosticStage() string
+				DiagnosticResponseShape() string
+			}
+			if errors.As(err, &boundary) {
+				event.DiagnosticStage = closedParserStage(boundary.DiagnosticStage())
+				event.DiagnosticResponseShape = closedResponseShape(boundary.DiagnosticResponseShape())
+			}
 			worker.emit(event)
 		} else {
 			switch result.State {
@@ -239,10 +249,12 @@ func (worker *AcquisitionWorker) Run(ctx context.Context) error {
 				}
 				worker.emit(WorkerEvent{Kind: WorkerStage, Recovered: result.Recovered,
 					JobID: result.ClaimedJobID, ClaimAttempts: result.ClaimAttempts, Stage: result.Stage.Stage,
-					DiagnosticCategory:   closedDiagnosticCategory(result.Stage.DiagnosticCategory),
-					DiagnosticElapsedMS:  result.Stage.DiagnosticElapsedMS,
-					DiagnosticCauseType:  closedCauseType(result.Stage.DiagnosticCauseType),
-					DiagnosticHTTPStatus: result.Stage.DiagnosticHTTPStatus})
+					DiagnosticCategory:      closedDiagnosticCategory(result.Stage.DiagnosticCategory),
+					DiagnosticElapsedMS:     result.Stage.DiagnosticElapsedMS,
+					DiagnosticCauseType:     closedCauseType(result.Stage.DiagnosticCauseType),
+					DiagnosticHTTPStatus:    result.Stage.DiagnosticHTTPStatus,
+					DiagnosticStage:         closedParserStage(result.Stage.DiagnosticStage),
+					DiagnosticResponseShape: closedResponseShape(result.Stage.DiagnosticResponseShape)})
 			default:
 				return &WorkerFailure{Kind: WorkerTransientError, Cause: errors.New("unexpected RunOnce result")}
 			}
@@ -260,6 +272,24 @@ func (worker *AcquisitionWorker) Run(ctx context.Context) error {
 func (worker *AcquisitionWorker) emit(event WorkerEvent) {
 	event.Owner = worker.owner
 	worker.sink(event)
+}
+
+func closedParserStage(stage string) string {
+	switch stage {
+	case "", "UNKNOWN", "USER_INFO_GET", "OFFLINE_POST_TRANSPORT", "OFFLINE_POST_OUTER_JSON", "OFFLINE_POST_BASE64_CRYPTO", "OFFLINE_POST_DECRYPTED_JSON", "OFFLINE_POST_REFERENCE":
+		return stage
+	default:
+		return "UNKNOWN"
+	}
+}
+
+func closedResponseShape(shape string) string {
+	switch shape {
+	case "", "UNKNOWN", "OBJECT", "ARRAY", "HTML", "TEXT", "EMPTY":
+		return shape
+	default:
+		return "UNKNOWN"
+	}
 }
 
 func closedDiagnosticCategory(category string) string {

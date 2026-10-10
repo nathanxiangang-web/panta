@@ -26,8 +26,8 @@ and reservation is retained; none was reset, requeued, or started a second time.
 | After SDK User-Agent preservation | RESPONSE_DECODE_FAILURE | 397 ms | 200 | json.SyntaxError |
 
 The final live result is **STOP**, with no known task reference, provider result,
-canonical Copy, or READY. The malformed JSON may be at the HTTP response or at
-the pinned driver's decrypted-response parser; the current evidence does not
+canonical Copy, or READY. The malformed JSON may be at the lazy GetUser request,
+the outer POST response, or the decrypted-response parser; historical evidence does not
 distinguish those locations or establish account rejection, source rejection,
 or remote-task absence. Gate 3.18 / Issue #60 and Issue #62 remain open.
 
@@ -47,7 +47,9 @@ or remote-task absence. Gate 3.18 / Issue #60 and Issue #62 remain open.
 
 `errors.Is` remains available for the existing adapter sentinels and known
 upstream/context causes. HTTP observation wraps the existing transport without
-altering requests or inspecting response bodies. It records status zero when no
+altering requests. It transiently inspects at most 64 KiB of response data to
+classify shape and test the pinned DownloadResp envelope, clears the buffer,
+and retains only closed metadata. It records status zero when no
 HTTP response is available.
 
 The pinned SDK's `SetHttpClient` replaces its resty client and headers. Panta now
@@ -60,3 +62,47 @@ OpenList verifier, Copy writer, or IndexCore trust change is introduced. A futur
 category must be added to the emission allowlist with a redaction regression
 test. Further live tests should follow a specifically evidenced correction;
 existing uncertain reservations remain historical diagnostic records.
+
+## Architect follow-up 6094823821: operation and parser boundaries
+
+The authenticated read-only GetUser probe on 2026-10-10 used the same pinned
+115driver v1.3.5, protected Cookie, 5-second HTTP timeout, SDK default User-Agent,
+and staging host network. No proxy environment was set. It succeeded with
+HTTP 200, one request, a valid JSON OBJECT (388 bytes), and a nonzero user ID,
+in 391 ms. No user ID, user information, Cookie, body or raw error was emitted.
+This proves current GetUser functionality, **not** the operation reached by any
+historical failed submission. No new live StartDownload was attempted.
+
+| Evidence | Reached | HTTP | Shape | Category / cause | Duration | Proven function / parser |
+| --- | --- | --- | --- | --- | --- | --- |
+| Live USER_INFO_GET | yes | 200 | OBJECT, valid JSON | OK / none | 391 ms | GetUser / UserInfoResp accepted |
+| Historical failing submission | unknown operation | 200 in last two runs | not retained | RESPONSE_DECODE_FAILURE / json.SyntaxError | 484 / 397 ms | unknown; final status alone is insufficient |
+| Live OFFLINE_POST after this follow-up | not attempted | n/a | n/a | n/a | n/a | unproven |
+| Fake lazy GetUser failure | GET only; no POST | 200 | TEXT | json.SyntaxError | synthetic | GetUser outer JSON |
+| Fake lazy GetUser success then POST failure | GET then POST | 200 | TEXT | json.SyntaxError | synthetic | OFFLINE_POST_OUTER_JSON |
+| Fake outer schema mismatch | POST | 200 | OBJECT, valid JSON | json.UnmarshalTypeError | synthetic | OFFLINE_POST_OUTER_JSON |
+| Fake malformed encrypted data | POST | 200 | OBJECT | base64.CorruptInputError | synthetic | OFFLINE_POST_BASE64_CRYPTO |
+| Fake RSA ciphertext (integer 9) | POST | 200 | OBJECT | json.SyntaxError | synthetic | OFFLINE_POST_DECRYPTED_JSON |
+
+Module additions remain diagnostic-only:
+
+- The transport identifies only the exact pinned user-info and offline-submit
+  operations, ignoring the SDK timestamp parameter. No URL or header is stored.
+- An outer response is classified only after complete EOF within the bound.
+  Partial/oversize bodies remain UNKNOWN and still reach the SDK unchanged.
+- A valid JSON document is not sufficient to prove successful outer decoding:
+  the exact pinned DownloadResp type must also parse. Only then may a later
+  typed JSON error be labelled decrypted JSON. Base64 errors identify crypto
+  decoding; transport failures before a response identify POST transport.
+- Reference-validation failures are OFFLINE_POST_REFERENCE. Unknown causes
+  remain UNKNOWN rather than guessing an API/crypto stage.
+- Dispatcher, Worker and operator propagate parser_stage and response_shape;
+  the Worker allowlists both. PostgreSQL recovery tests retain both metadata
+  fields and still verify the reservation prevents a second StartDownload.
+
+No production protocol correction is claimed. Synthetic tests prove diagnostic
+classification, not the root cause of the live failure. All five uncertain
+reservations remain intact. Issues #60 and #62 remain OPEN, Phase B remains STOP,
+and Gate 3.19 must not start. A precisely observed live POST boundary is still
+required before the architect can accept a root-cause fix and authorize a fresh
+download; historical response bytes cannot be reconstructed from old logs.

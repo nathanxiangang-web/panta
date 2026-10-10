@@ -57,9 +57,9 @@ func Run(ctx context.Context, action Action, cfg config.Config, bootstrapPath st
 		deps.WorkerOptions = append(deps.WorkerOptions, app.WithWorkerEventSink(func(event app.WorkerEvent) {
 			if event.Kind == app.WorkerTransientError ||
 				(event.Kind == app.WorkerStage && event.DiagnosticCategory != "") {
-				log.Printf("acquisition worker event=%s job_id=%s claim=%d stage=%s error_kind=%s first_error_category=%s elapsed_ms=%d cause_type=%s http_status=%d",
+				log.Printf("acquisition worker event=%s job_id=%s claim=%d stage=%s error_kind=%s first_error_category=%s elapsed_ms=%d cause_type=%s http_status=%d parser_stage=%s response_shape=%s",
 					event.Kind, event.JobID, event.ClaimAttempts, event.Stage, event.ErrorKind,
-					event.DiagnosticCategory, event.DiagnosticElapsedMS, event.DiagnosticCauseType, event.DiagnosticHTTPStatus)
+					event.DiagnosticCategory, event.DiagnosticElapsedMS, event.DiagnosticCauseType, event.DiagnosticHTTPStatus, event.DiagnosticStage, event.DiagnosticResponseShape)
 			}
 		}))
 	}
