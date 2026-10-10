@@ -328,6 +328,13 @@ The merged harness is read-only evidence collection only. **Gate 3.18 remains op
 
 Live Phase B first attempt (operator report, 2026-10-09) passed Panta preflight and Job claim, but the first real 115 StartDownload did not leave a durable task reference: linked Manifest/Job RECOVERY_REQUIRED and provider task START_RESERVED. The upstream failure cause and whether 115 actually created a remote task **remain unknown**. Issue #62 is the bounded diagnostic under Issue #60: read-only remote task inquiry, first error categorization, minimal fix and exact-head CI only if warranted, then a separate human-initiated fresh test with distinct IDs. Never clear the original fence or blindly replay; do not mark Gate 3.18 ACCEPTED or authorize Gate 3.19 on partial evidence.
 
+**Issue #62 diagnostics PR #63 ACCEPTED / MERGED (Gate 3.18 still BLOCKED):**
+- exact reviewed HEAD `39a3e02751f1fdcb9384c8fef04fc00085f22f1a`, Architect Review `5477994000`, squash `b0b91701e15409e7ff5cd573def5883e14b29052`, CI `38031086983` green;
+- accepted safe provider category/elapsed/status/type diagnostics after durable recovery and 115 SDK User-Agent initialization-order correction;
+- separate new-ID live attempts still show HTTP 200 with `json.SyntaxError` even after that correction; original failure cause remains UNKNOWN;
+- remote task inventory `NOT_FOUND_WITH_LIMITATIONS` does not establish absence of a provider side effect; historical START_RESERVED stays frozen;
+- next: pinpoint pinned SDK outer/encrypted JSON decoding seam with redacted protocol shape and a synthetic reproducer, followed by minimal evidence-based fix; no real retry until then;
+- Issues #62 and #60 stay OPEN; Gate 3.19 not authorized.
 Pinned external IndexCore baseline:
 
 ```text
