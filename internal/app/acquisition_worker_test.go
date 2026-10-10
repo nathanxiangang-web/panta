@@ -18,6 +18,14 @@ type workerRunnerDouble struct {
 	run      func(context.Context, RunOnceRequest, int) (RunOnceResult, error)
 }
 
+type testStartDiagnostic struct{ category string }
+
+func (diagnostic testStartDiagnostic) Error() string              { return "private upstream response" }
+func (diagnostic testStartDiagnostic) DiagnosticCategory() string { return diagnostic.category }
+func (diagnostic testStartDiagnostic) DiagnosticElapsed() time.Duration {
+	return 123 * time.Millisecond
+}
+
 func (runner *workerRunnerDouble) RunOnce(ctx context.Context, request RunOnceRequest) (RunOnceResult, error) {
 	runner.mu.Lock()
 	runner.calls++
@@ -143,7 +151,8 @@ func TestAcquisitionWorkerNormalEventsAndCadence(t *testing.T) {
 			return RunOnceResult{State: RunOnceRecoveryOnly, Recovered: 2}, nil
 		default:
 			return RunOnceResult{State: RunOnceStageCompleted,
-				Stage: &acquisition.StageDispatchResult{Stage: acquisition.StageProvider}}, nil
+				Stage: &acquisition.StageDispatchResult{Stage: acquisition.StageProvider,
+					DiagnosticCategory: "SOURCE_REJECTED", DiagnosticElapsedMS: 321}}, nil
 		}
 	}}
 	worker := newTestWorker(t, runner, WithWorkerWaiter(waiter), WithWorkerEventSink(func(event WorkerEvent) {
@@ -158,6 +167,9 @@ func TestAcquisitionWorkerNormalEventsAndCadence(t *testing.T) {
 		event := waitWorkerSignal(t, events)
 		if event.Kind != want || event.Owner != worker.Owner() {
 			t.Fatalf("event = %#v, want %s", event, want)
+		}
+		if want == WorkerStage && (event.DiagnosticCategory != "SOURCE_REJECTED" || event.DiagnosticElapsedMS != 321) {
+			t.Fatalf("stage diagnostic = %#v", event)
 		}
 		if want == WorkerIdle || want == WorkerRecoveryOnly {
 			if delay := waitWorkerSignal(t, waiter.called); delay != testWorkerPolicy().Interval {
@@ -208,6 +220,32 @@ func TestAcquisitionWorkerTransientErrorIsPaced(t *testing.T) {
 	}
 	if calls, _ := runner.snapshot(); calls != 2 {
 		t.Fatalf("tick count = %d", calls)
+	}
+}
+
+func TestAcquisitionWorkerEmitsOnlyClosedStartDiagnostic(t *testing.T) {
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	waiter := newWorkerWaitDouble()
+	events := make(chan WorkerEvent, 10)
+	runner := &workerRunnerDouble{run: func(_ context.Context, _ RunOnceRequest, _ int) (RunOnceResult, error) {
+		return RunOnceResult{}, &RunOnceError{Kind: RunOnceStageError,
+			Cause: testStartDiagnostic{category: "SOURCE_REJECTED"}}
+	}}
+	worker := newTestWorker(t, runner, WithWorkerWaiter(waiter), WithWorkerEventSink(func(event WorkerEvent) { events <- event }))
+	done := make(chan error, 1)
+	go func() { done <- worker.Run(ctx) }()
+	_ = waitWorkerSignal(t, events)
+	event := waitWorkerSignal(t, events)
+	if event.DiagnosticCategory != "SOURCE_REJECTED" || event.DiagnosticElapsedMS != 123 {
+		t.Fatalf("diagnostic event = %#v", event)
+	}
+	cancel()
+	if err := waitWorkerSignal(t, done); err != nil {
+		t.Fatal(err)
+	}
+	if got := closedDiagnosticCategory("SECRET_SOURCE_URL"); got != "" {
+		t.Fatalf("unexpected untrusted category %q", got)
 	}
 }
 

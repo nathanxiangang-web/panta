@@ -4,12 +4,19 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"testing"
 	"time"
 
 	"github.com/nathanxiangang-web/panta/internal/catalog"
 	"github.com/nathanxiangang-web/panta/internal/jobs"
 )
+
+type dispatchStartDiagnostic struct{}
+
+func (dispatchStartDiagnostic) Error() string                    { return "private upstream response" }
+func (dispatchStartDiagnostic) DiagnosticCategory() string       { return "SOURCE_REJECTED" }
+func (dispatchStartDiagnostic) DiagnosticElapsed() time.Duration { return 321 * time.Millisecond }
 
 type dispatchJobReader struct{ job jobs.Job }
 
@@ -179,6 +186,20 @@ func TestStageDispatcherProviderOutcomeTable(t *testing.T) {
 			}
 		})
 	}
+}
+
+func TestStageDispatcherRetainsRedactedDiagnosticAfterRecoveryCommit(t *testing.T) {
+	fixture := newDispatchFixture(t, StateActive)
+	fixture.provider.err = fmt.Errorf("%w: %w", ErrExecutionSideEffectUncertain, dispatchStartDiagnostic{})
+	result, err := fixture.dispatcher.Dispatch(context.Background(), fixture.request)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if result.Manifest.State != StateRecoveryRequired || result.Job.State != jobs.StateRecoveryRequired ||
+		result.DiagnosticCategory != "SOURCE_REJECTED" || result.DiagnosticElapsedMS != 321 {
+		t.Fatalf("recovery diagnostic = %#v", result)
+	}
+	fixture.assertCalls(t, 1, 1, 0, 0)
 }
 
 func TestStageDispatcherRoutesExactlyOnePersistedStage(t *testing.T) {

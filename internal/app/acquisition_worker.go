@@ -60,13 +60,17 @@ const (
 // WorkerEvent is deliberately free of source links, provider references and
 // credentials. Only durable IDs and closed categories are emitted.
 type WorkerEvent struct {
-	Kind          WorkerEventKind
-	Owner         string
-	Recovered     int64
-	JobID         jobs.JobID
-	ClaimAttempts int
-	Stage         acquisition.Stage
-	ErrorKind     RunOnceErrorKind
+	Kind                 WorkerEventKind
+	Owner                string
+	Recovered            int64
+	JobID                jobs.JobID
+	ClaimAttempts        int
+	Stage                acquisition.Stage
+	ErrorKind            RunOnceErrorKind
+	DiagnosticCategory   string
+	DiagnosticElapsedMS  int64
+	DiagnosticCauseType  string
+	DiagnosticHTTPStatus int
 }
 
 type WorkerEventSink func(WorkerEvent)
@@ -204,8 +208,25 @@ func (worker *AcquisitionWorker) Run(ctx context.Context) error {
 			if tickErr != nil {
 				kind = RunOnceCanceled
 			}
-			worker.emit(WorkerEvent{Kind: WorkerTransientError, Recovered: result.Recovered,
-				JobID: result.ClaimedJobID, ClaimAttempts: result.ClaimAttempts, ErrorKind: kind})
+			event := WorkerEvent{Kind: WorkerTransientError, Recovered: result.Recovered,
+				JobID: result.ClaimedJobID, ClaimAttempts: result.ClaimAttempts, ErrorKind: kind}
+			var diagnostic interface {
+				DiagnosticCategory() string
+				DiagnosticElapsed() time.Duration
+			}
+			if errors.As(err, &diagnostic) {
+				event.DiagnosticCategory = closedDiagnosticCategory(diagnostic.DiagnosticCategory())
+				event.DiagnosticElapsedMS = diagnostic.DiagnosticElapsed().Milliseconds()
+			}
+			var metadata interface {
+				DiagnosticCauseType() string
+				DiagnosticHTTPStatus() int
+			}
+			if errors.As(err, &metadata) {
+				event.DiagnosticCauseType = closedCauseType(metadata.DiagnosticCauseType())
+				event.DiagnosticHTTPStatus = metadata.DiagnosticHTTPStatus()
+			}
+			worker.emit(event)
 		} else {
 			switch result.State {
 			case RunOnceIdle:
@@ -217,7 +238,11 @@ func (worker *AcquisitionWorker) Run(ctx context.Context) error {
 					return &WorkerFailure{Kind: WorkerTransientError, Cause: errors.New("stage result missing")}
 				}
 				worker.emit(WorkerEvent{Kind: WorkerStage, Recovered: result.Recovered,
-					JobID: result.ClaimedJobID, ClaimAttempts: result.ClaimAttempts, Stage: result.Stage.Stage})
+					JobID: result.ClaimedJobID, ClaimAttempts: result.ClaimAttempts, Stage: result.Stage.Stage,
+					DiagnosticCategory:   closedDiagnosticCategory(result.Stage.DiagnosticCategory),
+					DiagnosticElapsedMS:  result.Stage.DiagnosticElapsedMS,
+					DiagnosticCauseType:  closedCauseType(result.Stage.DiagnosticCauseType),
+					DiagnosticHTTPStatus: result.Stage.DiagnosticHTTPStatus})
 			default:
 				return &WorkerFailure{Kind: WorkerTransientError, Cause: errors.New("unexpected RunOnce result")}
 			}
@@ -235,4 +260,31 @@ func (worker *AcquisitionWorker) Run(ctx context.Context) error {
 func (worker *AcquisitionWorker) emit(event WorkerEvent) {
 	event.Owner = worker.owner
 	worker.sink(event)
+}
+
+func closedDiagnosticCategory(category string) string {
+	switch category {
+	case "CONTEXT_CANCELED", "TIMEOUT", "AUTH_REJECTED", "SOURCE_REJECTED",
+		"TASK_ALREADY_EXISTS", "QUOTA_EXHAUSTED", "REQUEST_REJECTED",
+		"DNS_FAILURE", "TLS_FAILURE", "NETWORK_FAILURE",
+		"PROVIDER_API_UNKNOWN", "BACKEND_UNKNOWN", "REFERENCE_INVALID",
+		"REFERENCE_MISSING", "REFERENCE_AMBIGUOUS", "RESPONSE_DECODE_FAILURE":
+		return category
+	default:
+		return ""
+	}
+}
+
+func closedCauseType(value string) string {
+	switch value {
+	case "*errors.errorString", "*errors.fundamental", "*poll.DeadlineExceededError",
+		"*http.timeoutError", "*net.DNSError", "*net.OpError", "*url.Error",
+		"http2.StreamError", "http2.ConnectionError", "*json.SyntaxError",
+		"*json.UnmarshalTypeError", "base64.CorruptInputError", "x509.UnknownAuthorityError":
+		return value
+	case "":
+		return ""
+	default:
+		return "OTHER"
+	}
 }

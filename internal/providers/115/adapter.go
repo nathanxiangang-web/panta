@@ -138,18 +138,23 @@ func (adapter *Adapter) StartDownload(ctx context.Context, request contracts.Dow
 	adapter.mu.Lock()
 	defer adapter.mu.Unlock()
 
+	started := time.Now()
 	hashes, err := adapter.backend.AddOfflineTaskURI(ctx, request.Source.Value, request.Target.Scope)
+	elapsed := time.Since(started)
 	if err != nil {
-		if errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) {
-			return contracts.TaskReference{}, err
+		var diagnostic *StartDiagnostic
+		if errors.As(err, &diagnostic) {
+			diagnostic.elapsed = elapsed
+			return contracts.TaskReference{}, diagnostic
 		}
-		// The cause is wrapped for diagnosis. It never contains secret material
-		// because the backend boundary never receives credentials.
-		return contracts.TaskReference{}, fmt.Errorf("%w: %w", ErrBackendStart, err)
+		// The pinned driver can include the entire provider response body in an
+		// error, which may echo the source URI. Keep only a closed category in
+		// rendered errors while retaining errors.Is for known typed causes.
+		return contracts.TaskReference{}, newStartDiagnostic(err, elapsed)
 	}
 	reference, err := singleInfoHash(hashes)
 	if err != nil {
-		return contracts.TaskReference{}, err
+		return contracts.TaskReference{}, newReferenceDiagnostic(err, elapsed)
 	}
 	return contracts.TaskReference{Value: reference}, nil
 }
