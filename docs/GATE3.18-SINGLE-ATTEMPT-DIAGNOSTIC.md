@@ -10,10 +10,12 @@ Gate 3.18 Phase B remains STOP; Issues #62/#60 remain OPEN.
 ## Impact, authorization and preservation
 
 The environment owner must affirmatively approve ONE exact harmless HTTPS
-object (preferably <=1 MiB), its SHA-256, an empty dedicated 115 destination,
+object (preferably <=1 MiB), its `source_ref_sha256` as defined below, an empty
+dedicated 115 destination,
 fresh distinct Manifest/Job UUIDs, selected Binding/Root, and a 20-minute window.
 The original source belongs only in the protected submission file. Approval
-must not disclose it in GitHub/chat; a digest and private file path identify it.
+must not disclose it in GitHub/chat; `source_ref_sha256` and a private file path
+identify the approved source string.
 Neither this plan nor the older general staging authorization replaces that
 approval. Do not prepare a real request file on behalf of an unapproved run.
 
@@ -30,6 +32,22 @@ RUNNING recovery debt. On uncertainty or error: terminate this Worker, join it,
 inspect remotely read-only, and retain every record and any downloaded file.
 Stopping cannot undo a task that 115 may already have accepted. Cleanup/cancel
 is outside this authorization. No production deployment or schema migration.
+
+### Digest definitions (do not interchange)
+
+- `source_ref_sha256` = SHA-256 of the exact original `source_ref` string,
+  decoded from the protected request JSON and encoded as UTF-8, **without an
+  appended terminating newline**. Preserve every actual source character;
+  do not trim, normalize, URL-decode, re-encode or reconstruct the string.
+  JSON escape sequences must be decoded first; do not hash their literal
+  spelling, the JSON envelope, the request file, or newline-added shell output.
+- The existing `panta-staging` field named `source_sha256` uses this same
+  definition: SHA256(UTF8(exact persisted Manifest.source_ref)). Compare its
+  value to the approved `source_ref_sha256`; no production field is renamed.
+- `object_content_sha256`, if separately checked by the operator, is SHA-256
+  of the downloaded object's file bytes. It is optional, distinct evidence,
+  NOT the source-ref identity/digest used by approval or staging comparison.
+- Binary SHA-256 values identify executable bytes, not either source digest.
 
 ## 1. Preconditions (read-only; all must pass before approval/start)
 
@@ -128,7 +146,7 @@ continuing. This does not authenticate 115 or prove the submit endpoint works.
 ## 3. Approval checkpoint, protected request and enqueue
 
 Required affirmative record: "Authorize ONE real 115 diagnostic attempt for
-source SHA-256 <digest>, private request file <path>, Manifest <UUID>, Job
+source_ref_sha256 <digest>, private request file <path>, Manifest <UUID>, Job
 <UUID>, Binding <UUID>, Root <UUID>, destination <approved fingerprint>,
 20-minute window. Preserve all historical reservations; STOP on first error."
 
@@ -137,17 +155,44 @@ Only after that approval, the human creates one protected regular JSON file per
 approved fresh UUIDs, max_attempts=1, source_ref to the EXACT approved original
 bytes, selected target_storage_binding_id/target_path and explicit expected_name.
 No source normalization. Ensure both IDs are absent from the DB and no matching
-remote task exists; verify the local source digest without printing the source.
+remote task exists; verify `source_ref_sha256` privately before enqueueing,
+without printing the source. Compare it to the approval record, not to
+`object_content_sha256`.
 Do not create this file by echoing its contents into recorded terminal history.
 
 ```bash
 export PANTA_ACQUISITION_SUBMISSION_FILE='/absolute/protected/approved-request.json'
+python3 - "$PANTA_ACQUISITION_SUBMISSION_FILE" <<'PY'
+import hashlib
+import json
+import sys
+
+try:
+    with open(sys.argv[1], encoding="utf-8") as request_file:
+        source_ref = json.load(request_file)["source_ref"]
+    if not isinstance(source_ref, str):
+        raise ValueError("invalid source type")
+    digest = hashlib.sha256(source_ref.encode("utf-8")).hexdigest()
+except (OSError, ValueError, KeyError, TypeError):
+    raise SystemExit("STOP: source_ref digest verification failed")
+print("source_ref_sha256=" + digest)
+PY
+```
+
+The human must compare that digest to the expressly approved value and STOP
+on any mismatch BEFORE pasting the following enqueue commands. The Python
+example prints only the digest; its output newline is not part of the hashed
+input. This is future operator verification, not permission to read the real
+protected request during documentation work.
+
+```bash
 "$PANTA_BIN" submit-acquisition > "$RUN_DIR/submission.log" 2>&1
 "$STAGING_BIN" inspect > "$RUN_DIR/inspect.json"
 ```
 
 Require CREATED (not unexpected REPLAY), READY_TO_START, exact approved IDs,
-ACTIVE/QUEUED, claim_attempts=0, source digest match, no provider-task row.
+ACTIVE/QUEUED, claim_attempts=0, and inspect.source_sha256 equal to the approved
+`source_ref_sha256`, with no provider-task row.
 Stop on PENDING_ACTIVATION, conflicting replay or any error; do not automatically
 repeat submission. Recheck queue inventory: exactly ONE live ACQUISITION Job,
 the approved Job, zero RUNNING/RETRY_WAIT/expired Jobs and no other submitters.
@@ -209,7 +254,10 @@ service restart policy is allowed. Error log monitoring stops within one poll;
 watch checks durable uncertainty every five seconds. START_RESERVED continues
 to prevent a second StartDownload even during this brief shutdown interval.
 Failure to observe/stop, force-kill, interrupted shutdown or Worker timeout is
-STOP and must be reported, not automatically retried.
+STOP and must be reported, not automatically retried. As a hard preflight
+requirement, the operator must have a verified way to identify the actual
+Panta Worker process and confirm its exit after timeout/SIGTERM. Bash syntax
+validation does not test live signal delivery, process groups or child cleanup.
 Record supervisor/watch exit codes; a supervisor exit code alone is not proof
 of graceful Worker shutdown. Confirm no remaining child Worker before handoff.
 
@@ -228,12 +276,16 @@ watch record plus read-only SQL and the existing human provider inquiry path.
 Check the approved destination/task list read-only, with pagination/coverage
 limits. No match is NOT proof the remote task was never created.
 
-Only publish these fields: deployed revision/digest, safe run IDs, timestamp,
+Only publish these fields: deployed revision/binary digest, safe run IDs, timestamp,
 operation, parser_stage, response_shape, http_status, closed cause_type,
 elapsed_ms/category; Manifest/Job/task states, claim/failure counters and
 reference presence; Q5/Q8/Copy/result_copy_id evidence. Never publish worker
 logs wholesale, raw errors/body, source/result name, task reference, query
 parameters, process environment, Cookie, Token, DSN or protected config files.
+The approval/private-verification/evidence identity is consistently
+`source_ref_sha256`; label staging's existing `source_sha256` as that value in
+the handoff. If included, label `object_content_sha256` separately and never
+use it as the staging source comparison.
 
 | Observed parser/category | What is proven | Action |
 | --- | --- | --- |
