@@ -1,5 +1,10 @@
 # Gate 3.18 — human-operated staging acceptance runbook
 
+For Issue #62's diagnostic-only, separately authorized fresh attempt, use the
+[single-attempt diagnostic plan](GATE3.18-SINGLE-ATTEMPT-DIAGNOSTIC.md) as the
+additional approval/queue-isolation/stop checklist. That plan is not permission
+to start a download or retry any historical reservation.
+
 Issue #60 / D-041. This runbook prepares one staging-only real-account test;
 merging the harness does **not** execute it or authorize automation to start a
 real 115 download. The human operator controls the source, destination,
