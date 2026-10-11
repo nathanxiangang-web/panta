@@ -1099,9 +1099,21 @@ Governing decision: D-040.
 
 ### Gate 3.18 — Human-authorized real 115 + OpenList + IndexCore staging E2E
 
-Status: **PHASE A ACCEPTED / PR #63 DIAGNOSTICS ACCEPTED / PHASE B LIVE 115 START BLOCKED**
+Status: **PHASE A ACCEPTED / C2-A SYNTHETIC ACCEPTED / C2-B0 EVIDENCE ACCEPTED / C2-B ADMISSION NO-GO / PHASE B STOP**
 
-Tracking: GitHub Issue #60 / Phase A PR #61 / live-start diagnostic Issue #62 / merged diagnostics PR #63
+Tracking: GitHub Issue #60 / diagnostic and staging Issue #62 / docs synchronization Issue #66
+
+Current checkpoint: C1, C1.5 and C2-A are accepted as preparation/synthetic
+evidence only. C2-B0 read-only evidence is now **ACCEPTED**; C2-B admission is
+**NO-GO / OWNER ACTION REQUIRED**. The next action belongs to the environment
+owner, not another C2-B0 worker run. C2-B real changes and C3 live download are
+**NOT AUTHORIZED**. No real acquisition has reached
+accepted READY. Database remains v12; five historical linked
+RECOVERY_REQUIRED / START_RESERVED pairs remain frozen.
+
+Required order:
+`C2-A accepted -> C2-B0 evidence accepted / admission NO-GO -> resource-specific C2-B owner approval/implementation -> separate C3 one-shot approval -> Gate 3.18 final E2E closeout -> Gate 4`.
+Gate 4/5/6 remain blueprint plans, not implementation permission; no Gate 3.19.
 
 Phase A evidence:
 - reviewed exact HEAD `7424e5322fbb061fd14472dc0becde03b9fa6272`;
@@ -1129,6 +1141,50 @@ Diagnostic PR #63 (accepted/merged, not acquisition acceptance):
 - 115 read-only task search NOT_FOUND_WITH_LIMITATIONS; original and diagnostic START_RESERVED rows remain unchanged;
 - next: inspect pinned 115driver response/decryption contract and identify parser failure location with synthetic tests before any new real source submission. No Gate 3.19.
 
+
+### Subsequent accepted checkpoints (earlier evidence above retained)
+
+- [PR #64](https://github.com/nathanxiangang-web/panta/pull/64): parser-boundary
+  diagnostics accepted; reviewed HEAD `a140486f9ff7626a6a322764ba4b880c2e969583`,
+  squash `9e2e2e5cdaf140e97c030b0678e1418660d1b48c`. Synthetic diagnostics do not
+  identify an unretained historical HTTP response or prove real download success.
+- [PR #65](https://github.com/nathanxiangang-web/panta/pull/65): single-attempt
+  operator plan merged at `f28f3a05759a6e4a9c7f01895e58df8db9829f33`; exact
+  source_ref SHA-256 definition corrected. A plan is not live-test authorization.
+- C1: isolated clean Panta candidate built from that accepted main; prepared
+  Hint address remains inactive. [Report](https://github.com/nathanxiangang-web/panta/issues/62#issuecomment-6096649587),
+  [acceptance](https://github.com/nathanxiangang-web/panta/issues/62#issuecomment-6096681761).
+- C1.5: configuration-first restricted virtual-root proposal accepted; the
+  existing non-root collector yields a Hint/Q5 coordinate incompatibility.
+  Do not prepend guessed prefixes or modify accepted protocols.
+  [Report](https://github.com/nathanxiangang-web/panta/issues/62#issuecomment-6097019507),
+  [acceptance](https://github.com/nathanxiangang-web/panta/issues/62#issuecomment-6097060575).
+- C2-A: independent OpenList v4.2.6 synthetic Local instance actually running
+  on host loopback, restart=no, fresh private state and no real 115 mount or
+  credentials. [Report](https://github.com/nathanxiangang-web/panta/issues/62#issuecomment-6097687709),
+  [acceptance](https://github.com/nathanxiangang-web/panta/issues/62#issuecomment-6098683022).
+  Synthetic PASS is **not** real 115 isolation, Hint/Q5/Q8 or E2E acceptance.
+- Historical [C2-B0 work order](https://github.com/nathanxiangang-web/panta/issues/62#issuecomment-6098855717)
+  is completed: [actual report](https://github.com/nathanxiangang-web/panta/issues/62#issuecomment-6098957134)
+  and [architect acceptance](https://github.com/nathanxiangang-web/panta/issues/62#issuecomment-6099065863).
+  **READ-ONLY EVIDENCE ACCEPTED / C2-B ADMISSION NO-GO**. In the measured scope,
+  the synthetic instance at `127.0.0.1:5248`, original nine containers, pinned
+  single IndexCore writer, schema v12 and five historical recovery/reservation
+  pairs stayed unchanged. The old native directory still contains its marker;
+  new provider scope/view/Root/Binding identities remain UNSET. No real mount,
+  Hint or new-root Q5/Q8/acquisition validation was performed.
+  Next: the environment owner privately selects a NEW independently empty
+  named native 115 destination, completes privileged root/other-user
+  service/drop-in/timer/cron/restart-controller audit and identifies the exact
+  IndexCore launcher, then explicitly approves each C2-B resource/change,
+  operator, outage/freeze/rollback and fixture/Hint write. Privileged audit
+  remains UNKNOWN; real credentials and destination are not owner-approved.
+  Do not repeat C2-B0 or infer authority from its acceptance.
+  C2-B requires concrete resource/change/outage approval
+  before mount, new Root/Binding, existing single-writer restart, controlled
+  baseline or diagnostic Hint. Sentinel creation/removal needs explicit scope.
+  C3 separately requires protected source digest, fresh IDs, verified empty
+  destination/four coordinates and bounded single-worker human-start window.
 
 External baseline:
 - IndexCore `v0.4.0-alpha.1`;
