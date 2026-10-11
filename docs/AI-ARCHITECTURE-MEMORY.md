@@ -2,8 +2,8 @@
 
 > Canonical short-form project memory for Architect/AI sessions.
 >
-> Last architecture-memory synchronization: **2026-10-10**
-> Active Gate: **3.18 / Issue #60 — Phase B STOP; C2-A synthetic accepted; C2-B/C3 not authorized**
+> Last architecture-memory synchronization: **2026-10-11**
+> Active Gate: **3.18 / Issue #60 — Phase B STOP; C2-B0 evidence accepted; C2-B admission NO-GO; C3 not authorized**
 > Governing corrections: **D-029** (IndexCore-owned observation), **D-030** (Git-first AI reconstruction), **D-032** (durable result_name locator), **D-033** (READY anchored to one canonical projected Copy), **D-034** (one-claim stage routing), **D-035** (type-scoped claiming and atomic recovery), **D-036** (one explicit runner tick), **D-037** (opt-in worker lifecycle), **D-038** (fail-closed runtime graph and secret/trust boundaries), **D-039** (protected operator bootstrap/preflight), **D-040** (deterministic source intake with exact value preservation), and **D-041** (human-authorized live staging acceptance without architectural bypass).
 >
 > **Read this file before planning, reviewing, or authorizing any new Gate.**
@@ -363,11 +363,22 @@ Live Phase B first attempt (operator report, 2026-10-09) passed Panta preflight 
 - **Actual synthetic PASS; real 115 / Hint / Q5 / E2E NOT TESTED in C2-A.**
   Full live restricted-view isolation is still unproven. Five historical
   RECOVERY_REQUIRED / START_RESERVED pairs stay frozen; schema v12.
-- [C2-B0 instruction](https://github.com/nathanxiangang-web/panta/issues/62#issuecomment-6098855717):
-  Issue #66 docs-only PR first, then read-only actual admission checks. Current
-  blockers: privileged controller/other-user scheduler audit UNKNOWN, dedicated
-  empty native destination and credential/change scope not owner-approved.
-  Retain C2-A and original services; do not restart or alter them during B0.
+- Historical [C2-B0 instruction](https://github.com/nathanxiangang-web/panta/issues/62#issuecomment-6098855717)
+  is completed: [actual report](https://github.com/nathanxiangang-web/panta/issues/62#issuecomment-6098957134)
+  and [architect acceptance](https://github.com/nathanxiangang-web/panta/issues/62#issuecomment-6099065863).
+  **READ-ONLY EVIDENCE ACCEPTED / C2-B ADMISSION NO-GO**. In measured scope,
+  synthetic instance `127.0.0.1:5248`, original nine containers, pinned single
+  IndexCore writer, schema v12 and five recovery/reservation pairs stayed
+  unchanged. Old native directory is still nonempty (marker retained); new
+  provider/view/Root/Binding coordinates remain UNSET. No real mount, Hint or
+  new-root Q5/Q8/acquisition validation. Next action is **environment-owner
+  handoff**, not another worker code/plan task or repeat B0: privately select a
+  NEW named independently empty native 115 destination; complete privileged
+  root/other-user service/drop-in/timer/cron/restart audit and identify the exact
+  IndexCore launcher; explicitly approve each real change, operator and
+  outage/freeze/rollback scope, including any fixture/Hint writes. Privileged
+  audit remains UNKNOWN; destination/credentials/change scope not approved.
+  Retain C2-A and original services; do not restart or alter them without approval.
 - **C2-B NOT AUTHORIZED:** real mount/credential import, new Root/Binding,
   pinned existing single-writer Hint enable/restart, sentinel lifecycle,
   baseline/scan and diagnostic Hint require concrete owner approval and a
@@ -378,8 +389,9 @@ Live Phase B first attempt (operator report, 2026-10-09) passed Panta preflight 
   executable provenance, single Worker and bounded human-start window required.
   No submit/start, provider POST, replay or recovery bypass during B0.
 
-Dependency chain: **C2-A accepted -> C2-B0 read-only -> C2-B owner-gated ->
-C3 exact human one-shot -> Gate 3.18 accepted closeout -> Gate 4**. Gate 5 Agent
+Dependency chain: **C2-A accepted -> C2-B0 evidence accepted / admission NO-GO ->
+resource-specific C2-B owner approval/implementation -> separate C3 one-shot
+approval -> Gate 3.18 final E2E closeout -> Gate 4**. Gate 5 Agent
 and Gate 6 replacement/MVP closeout follow blueprint acceptance, not parallel
 implementation authority. Issues #60/#62 stay open; no Gate 3.19.
 
@@ -542,8 +554,9 @@ Accepted:
 
 Authorized now:
 - **Gate 3.18 — Issue #60 — Human-authorized real 115 + OpenList + IndexCore staging E2E**
-- Current bounded work only: Issue #66 docs synchronization PR, then Issue #62
-  C2-B0 read-only admission; C2-B changes and C3 download remain owner-gated.
+- Current developer task only: narrow Issue #66 / PR #67 docs correction to
+  record accepted C2-B0 evidence. Runtime next action belongs to the environment
+  owner; C2-B admission NO-GO and C3 not authorized. No repeated B0 task.
 
 Not authorized yet:
 - direct Panta OpenList acquisition verifier;

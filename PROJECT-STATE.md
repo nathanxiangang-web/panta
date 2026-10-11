@@ -1099,19 +1099,20 @@ Governing decision: D-040.
 
 ### Gate 3.18 — Human-authorized real 115 + OpenList + IndexCore staging E2E
 
-Status: **PHASE A ACCEPTED / C2-A SYNTHETIC ACCEPTED / PHASE B STOP**
+Status: **PHASE A ACCEPTED / C2-A SYNTHETIC ACCEPTED / C2-B0 EVIDENCE ACCEPTED / C2-B ADMISSION NO-GO / PHASE B STOP**
 
 Tracking: GitHub Issue #60 / diagnostic and staging Issue #62 / docs synchronization Issue #66
 
 Current checkpoint: C1, C1.5 and C2-A are accepted as preparation/synthetic
-evidence only. Issue #66 synchronizes these pointers; after its PR handoff,
-the authorized runtime work is **C2-B0 read-only admission**. C2-B real changes
-and C3 live download are **NOT AUTHORIZED**. No real acquisition has reached
+evidence only. C2-B0 read-only evidence is now **ACCEPTED**; C2-B admission is
+**NO-GO / OWNER ACTION REQUIRED**. The next action belongs to the environment
+owner, not another C2-B0 worker run. C2-B real changes and C3 live download are
+**NOT AUTHORIZED**. No real acquisition has reached
 accepted READY. Database remains v12; five historical linked
 RECOVERY_REQUIRED / START_RESERVED pairs remain frozen.
 
 Required order:
-`C2-A accepted -> C2-B0 read-only -> C2-B owner-approved changes -> C3 exact human one-shot -> Gate 3.18 closeout -> Gate 4`.
+`C2-A accepted -> C2-B0 evidence accepted / admission NO-GO -> resource-specific C2-B owner approval/implementation -> separate C3 one-shot approval -> Gate 3.18 final E2E closeout -> Gate 4`.
 Gate 4/5/6 remain blueprint plans, not implementation permission; no Gate 3.19.
 
 Phase A evidence:
@@ -1163,10 +1164,23 @@ Diagnostic PR #63 (accepted/merged, not acquisition acceptance):
   credentials. [Report](https://github.com/nathanxiangang-web/panta/issues/62#issuecomment-6097687709),
   [acceptance](https://github.com/nathanxiangang-web/panta/issues/62#issuecomment-6098683022).
   Synthetic PASS is **not** real 115 isolation, Hint/Q5/Q8 or E2E acceptance.
-- Current [C2-B0 work order](https://github.com/nathanxiangang-web/panta/issues/62#issuecomment-6098855717):
-  read-only containment/destination/controller/fence verification. Privileged
-  audit remains UNKNOWN; exact empty native destination and real credentials
-  are not owner-approved. C2-B requires concrete resource/change/outage approval
+- Historical [C2-B0 work order](https://github.com/nathanxiangang-web/panta/issues/62#issuecomment-6098855717)
+  is completed: [actual report](https://github.com/nathanxiangang-web/panta/issues/62#issuecomment-6098957134)
+  and [architect acceptance](https://github.com/nathanxiangang-web/panta/issues/62#issuecomment-6099065863).
+  **READ-ONLY EVIDENCE ACCEPTED / C2-B ADMISSION NO-GO**. In the measured scope,
+  the synthetic instance at `127.0.0.1:5248`, original nine containers, pinned
+  single IndexCore writer, schema v12 and five historical recovery/reservation
+  pairs stayed unchanged. The old native directory still contains its marker;
+  new provider scope/view/Root/Binding identities remain UNSET. No real mount,
+  Hint or new-root Q5/Q8/acquisition validation was performed.
+  Next: the environment owner privately selects a NEW independently empty
+  named native 115 destination, completes privileged root/other-user
+  service/drop-in/timer/cron/restart-controller audit and identifies the exact
+  IndexCore launcher, then explicitly approves each C2-B resource/change,
+  operator, outage/freeze/rollback and fixture/Hint write. Privileged audit
+  remains UNKNOWN; real credentials and destination are not owner-approved.
+  Do not repeat C2-B0 or infer authority from its acceptance.
+  C2-B requires concrete resource/change/outage approval
   before mount, new Root/Binding, existing single-writer restart, controlled
   baseline or diagnostic Hint. Sentinel creation/removal needs explicit scope.
   C3 separately requires protected source digest, fresh IDs, verified empty
